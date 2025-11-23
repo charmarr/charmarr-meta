@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="../../assets/charmarr-charmarr-adr.png" width="450" alt="Charmarr ADR">
+  <img src="../../assets/charmarr-charmarr-adr.png" width="350" alt="Charmarr ADR">
 </p>
 
 # Charmarr Networking Architecture
@@ -39,10 +39,10 @@ Charmarr's networking architecture provides:
 
 ## Traffic Flow Summary
 
-**External → Services**: Tailscale → MetalLB → Istio Gateway → Service
-**Download Client → Tracker**: eth0 → vxlan0 → pod-gateway → gluetun → VPN tunnel
-**Download Client → Radarr**: eth0 → ztunnel (mTLS) → ztunnel → Radarr
-**Kill Switch**: NetworkPolicy (routing failures) + gluetun firewall (VPN disconnects)
+- **External → Services**: Tailscale → MetalLB → Istio Gateway → Service
+- **Download Client → Tracker**: eth0 → vxlan0 → pod-gateway → gluetun → VPN tunnel
+- **Download Client → Radarr**: eth0 → ztunnel (mTLS) → ztunnel → Radarr
+- **Kill Switch**: NetworkPolicy (routing failures) + gluetun firewall (VPN disconnects)
 
 ## Explicitly Deferred
 
