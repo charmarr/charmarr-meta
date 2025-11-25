@@ -62,10 +62,10 @@ graph TD
 **Rejected alternatives:**
 * Gluetun only: Doesn't catch routing failures (if VXLAN doesn't set up, traffic leaks via default route)
 * NetworkPolicy only: Doesn't protect against VPN disconnection at gateway (would need to detect and reconfigure)
-* Istio AuthorizationPolicy: Operates at Layer 7, only sees ztunnel-intercepted traffic, misses VXLAN traffic (wrong layer for IP routing control)
+* Istio AuthorizationPolicy: Operates at Layer 7/4, only sees ztunnel-intercepted traffic, misses VXLAN traffic (wrong layer for IP routing control)
 
 **Why NOT Istio AuthorizationPolicy:**
 * AuthorizationPolicy enforcement point: ztunnel (inside pod, sees only eth0 traffic)
 * VXLAN traffic uses vxlan0 interface, bypasses ztunnel entirely
 * AuthorizationPolicy has no visibility into routing table decisions
-* Layer mismatch: AuthorizationPolicy is Layer 7 (HTTP), kill switch needs Layer 3 (IP)
+* Layer mismatch: AuthorizationPolicy is Layer 7/4 (HTTP/TCP), kill switch needs Layer 3 (IP)
