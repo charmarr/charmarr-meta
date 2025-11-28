@@ -8,7 +8,7 @@
 
 ## Context and Problem Statement
 
-Charmarr deploys arr stack applications (Radarr, Sonarr, Plex, etc.) that need to share media files and downloads. The Trash Guides best practices require that downloads and media library exist on the same filesystem to enable hardlinks, which prevents duplicate storage usage when seeding torrents. Juju's standard storage model creates separate PersistentVolumeClaims for each charm, resulting in separate filesystems where hardlinks cannot work across boundaries. How should we architect storage so that all arr applications can access the same filesystem while maintaining clean Juju charm patterns?
+Charmarr deploys arr stack applications (Radarr, Sonarr, Plex, etc.) that need to share media files and downloads. The [TRaSH Guides](https://trash-guides.info/) best practices require that downloads and media library exist on the same filesystem to enable hardlinks, which prevents duplicate storage usage when seeding torrents. Juju's standard storage model creates separate PersistentVolumeClaims for each charm, resulting in separate filesystems where hardlinks cannot work across boundaries. How should we architect storage so that all arr applications can access the same filesystem while maintaining clean Juju charm patterns?
 
 ## Considered Options
 
@@ -19,7 +19,7 @@ Charmarr deploys arr stack applications (Radarr, Sonarr, Plex, etc.) that need t
 
 ## Decision Outcome
 
-Chosen option: "Use a single shared PVC that all arr charms mount simultaneously", because this is the only approach that satisfies the [TRaSH Guides](https://trash-guides.info/) hardlink requirement while keeping storage management within Kubernetes and Juju. Multiple pods can mount the same PVC when it has ReadWriteMany access mode (for NFS) or when all pods are on the same node with ReadWriteOnce (for local storage). This pattern is already proven to work by the k8s-at-home community's media server deployments.
+Chosen option: "Use a single shared PVC that all arr charms mount simultaneously", because this is the only approach that satisfies the TRaSH Guides hardlink requirement while keeping storage management within Kubernetes and Juju. Multiple pods can mount the same PVC when it has ReadWriteMany access mode (for NFS) or when all pods are on the same node with ReadWriteOnce (for local storage). This pattern is already proven to work by the k8s-at-home community's media server deployments.
 
 ```mermaid
 graph TB
@@ -59,7 +59,7 @@ The shared PVC follows the TRaSH Guides recommended directory structure within t
     └── music/
 ```
 
-Each arr charm mounts the shared PVC at `/data` and uses subdirectories according to Trash Guides conventions. Radarr writes downloads to `/data/torrents/movies` and manages the library at `/data/media/movies`. Sonarr uses `/data/torrents/tv` and `/data/media/tv`. Plex reads from `/data/media`. When Radarr imports a completed download, it creates a hardlink from the download location to the media location, allowing the torrent client to continue seeding while Plex serves the file, with only one copy consuming disk space.
+Each arr charm mounts the shared PVC at `/data` and uses subdirectories according to TRaSH Guides conventions. Radarr writes downloads to `/data/torrents/movies` and manages the library at `/data/media/movies`. Sonarr uses `/data/torrents/tv` and `/data/media/tv`. Plex reads from `/data/media`. When Radarr imports a completed download, it creates a hardlink from the download location to the media location, allowing the torrent client to continue seeding while Plex serves the file, with only one copy consuming disk space.
 
 **Access Modes and Multi-Node Considerations:**
 
@@ -74,7 +74,7 @@ While media and downloads use the shared PVC, each charm maintains separate stor
 * Good, because hardlinks work correctly across all arr applications, preventing duplicate storage usage for seeded torrents
 * Good, because follows proven k8s-at-home patterns that the community already uses successfully
 * Good, because storage expansion only needs to happen in one place rather than coordinating across multiple PVCs
-* Good, because standardizing on Trash Guides directory structure ensures compatibility with existing arr stack documentation and tools
+* Good, because standardizing on TRaSH Guides directory structure ensures compatibility with existing arr stack documentation and tools
 * Good, because separating config storage from media storage allows different storage backends optimized for each use case
 * Bad, because we cannot use Juju's built-in storage declarations for the shared data volume
 * Bad, because all charms must coordinate to use the same directory structure within the shared storage
