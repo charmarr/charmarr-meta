@@ -28,10 +28,43 @@ Chosen option: "Create a dedicated charmarr-storage charm that owns and manages 
 
 The storage charm exposes the following configuration options:
 - `backend-type`: Required, either "local" or "nfs", determines which resources the charm manages
-- `storage-class`: For local backend, which Kubernetes StorageClass to use (e.g., "topolvm-provisioner")
+- `storage-class`: For local backend, which Kubernetes StorageClass to use (e.g., "topolvm-provisioner", "local-path")
 - `nfs-server`: For NFS backend, the NFS server IP address or hostname
 - `nfs-path`: For NFS backend, the export path on the NFS server
 - `size`: Storage capacity to provision, semantic meaning differs by backend type (see [ADR-003](adr-003-storage-backends.md))
+
+**Backend Selection Guidance:**
+
+The choice of storage backend depends on your deployment scenario:
+
+**Use local storage with simpler provisioners (local-path, hostPath) when:**
+- Running single-node MicroK8s for homelab/testing
+- You already have filesystem-level redundancy (ZFS, BTRFS, hardware RAID)
+- You prioritize simplicity over enterprise features
+- Your storage is managed at the filesystem layer, not the Kubernetes layer
+
+**Use NFS storage when:**
+- **Going multi-node** - NFS provides ReadWriteMany access so pods can be scheduled on any node
+- You have a dedicated NAS appliance (Synology, TrueNAS, etc.) that handles redundancy
+- Your media storage is already on a network file server
+- You want storage to survive complete cluster rebuilds
+- Network latency is acceptable for your workload (media files are large, not latency-sensitive)
+
+**Use local storage with TopoLVM when:**
+- You need ReadWriteOnce block storage distributed across multiple nodes (not applicable to Charmarr's shared media use case)
+- You're running databases or other workloads that need node-local storage with capacity tracking
+- You want LVM features like thin provisioning and snapshots across a cluster
+
+**Important Note on Multi-Node Media Workloads:** For Charmarr specifically, if you go multi-node, **NFS is the right choice**, not TopoLVM. TopoLVM provides ReadWriteOnce access, which means all pods mounting the shared media PVC would still be stuck on one node anyway. NFS's ReadWriteMany support lets you truly distribute your arr application pods across nodes while still accessing the same shared media storage.
+
+**Important Note on Redundancy:** Kubernetes and TopoLVM do NOT provide data redundancy. If you need redundancy (and you should for media libraries), implement it at the filesystem or hardware level:
+- **ZFS** with mirrored or RAIDZ pools
+- **BTRFS** with RAID1/RAID10
+- **Hardware RAID** controllers
+- **mdadm** software RAID on Linux
+- **NAS appliances** with built-in redundancy (TrueNAS, Synology)
+
+The Kubernetes layer (TopoLVM, local-path, etc.) sits on top of your redundant filesystem and provides provisioning, not protection.
 
 **Reconciler Pattern:**
 
