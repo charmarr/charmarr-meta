@@ -1,5 +1,7 @@
 # Istio Ambient Mesh Integration Strategy
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Charmarr uses Istio Ambient mesh for mTLS and observability between arr services. Download clients need to communicate with arr services (Radarr tells qBittorrent to download) while also routing external traffic through VPN. How do we integrate VXLAN-based VPN routing with Istio Ambient mesh without conflicts?

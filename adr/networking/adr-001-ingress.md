@@ -1,5 +1,7 @@
 # Ingress Networking Architecture for Charmarr Stack
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Charmarr is a new media streaming infrastructure management system loosely based on the legacy psygoat-servarr Docker Compose stack from 2 years ago. The challenge is to design an ingress networking architecture that provides secure access to media services (Radarr, Sonarr, Prowlarr, Overseerr, Plex/Jellyfin, and download clients) with differentiated access control for different user groups, remote access via Tailscale, integration with Canonical's Charmed Istio service mesh, and full automation through Terraform without manual configuration steps.

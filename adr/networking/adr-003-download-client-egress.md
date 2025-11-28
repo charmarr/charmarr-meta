@@ -1,5 +1,7 @@
 # Download Client VPN Integration Method
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Download client pods need to be configured to route their traffic through the VPN gateway via VXLAN. This requires injecting an init container, adding NET_ADMIN capability, and configuring routing rules. How do we automate this configuration in a way that aligns with Juju's charm-based orchestration model?

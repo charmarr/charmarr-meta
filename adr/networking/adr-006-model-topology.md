@@ -1,5 +1,7 @@
 # Multi-Model Deployment Topology
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Charmarr consists of content management services (arr stack, media servers) and download clients with VPN requirements. These have different security profiles, update cadences, and operational concerns. How should we organize these services across Juju models to balance separation of concerns with operational simplicity?

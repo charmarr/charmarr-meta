@@ -1,5 +1,7 @@
 # VPN Gateway Solution for Download Clients
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Download clients (qBittorrent, SABnzbd) need to route all external traffic through a VPN for privacy and to avoid exposing the user's real IP address to torrent trackers and Usenet providers. How do we implement VPN egress routing in a Kubernetes environment that integrates with Charmarr's Juju-based architecture?

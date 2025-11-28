@@ -1,5 +1,7 @@
 # VPN Kill Switch Implementation Strategy
 
+**Status:** Accepted
+
 ## Context and Problem Statement
 
 Download clients must never leak traffic to the internet if the VPN disconnects or if routing configuration fails. A "kill switch" prevents the user's real IP address from being exposed to trackers/providers. How do we implement a reliable kill switch that catches both VPN failures and routing misconfigurations?
