@@ -1,6 +1,6 @@
 # StatefulSet Volume Patching via Lightkube
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Related ADRs:**
 - [ADR-001: Shared PVC Architecture](adr-001-shared-pvc-architecture.md) - Establishes the shared PVC that needs to be mounted
@@ -21,7 +21,21 @@ Consuming charms like Radarr and Sonarr need to mount the shared PVC created by 
 
 Chosen option: "Have consuming charms use lightkube to patch their own StatefulSet to add volume mounts", because this allows charms to dynamically add volumes after deployment based on relation data, which is not possible with static metadata declarations. Charms can use the lightkube library to fetch their StatefulSet, add volume and volumeMount definitions referencing the PVC by name, and patch the resource back. This pattern works within Juju's sidecar charm model and has been used successfully for other types of pod spec modifications.
 
-**CRITICAL NOTE**: This approach requires validation before full implementation. While patching pod labels and resource constraints is known to work, patching volume mounts causes pod restarts and may interact with Juju's StatefulSet management in unexpected ways. ADR-004 should remain in "Proposed" status until validation testing confirms this pattern works correctly.
+### Validation Results
+
+**Key Findings:**
+- ✅ Charms successfully patch StatefulSets via lightkube to add volumes and volumeMounts
+- ✅ Kubernetes rolls out pods with volumes mounted and accessible
+- ✅ **Juju does NOT interfere with manual patches** - patches persist through charm refresh, relation changes, and update-status hooks
+- ✅ Idempotency checks prevent unnecessary pod restarts
+- ✅ Data persists across pod restarts and charm lifecycle events
+
+**Critical Gotchas:**
+1. **Container Name:** Use the exact container name from `charmcraft.yaml` (e.g., `bookinfo-radarr`), NOT `self.app.name`. The latter is the Juju app name and won't match the actual container name in the StatefulSet.
+2. **Trust Flag Required:** Charms MUST be deployed with `juju deploy --trust` to access the Kubernetes API for patching operations.
+3. **Idempotency is Essential:** Always check if volume is already mounted before patching to avoid unnecessary pod restarts.
+
+Full validation details: See [adr-004-validation-plan.md](https://github.com/charmarr/.ai/blob/main/done/adr-004-validation-plan.md) in project repository.
 
 ### Implementation Details
 
@@ -184,10 +198,10 @@ sequenceDiagram
 * Good, because Kubernetes patches are idempotent at the API level, preventing duplicate work
 * Good, because sidecar pattern naturally supports mounting volumes at pod level for all containers
 * Good, because blocked status clearly communicates when required relations are missing
-* Bad, because requires validation that Juju doesn't interfere with manual StatefulSet patches
+* Good, because validation confirms Juju does NOT interfere with manual StatefulSet patches
 * Bad, because StatefulSet patching triggers pod restarts which causes brief downtime during initial setup
 * Bad, because charms should check state before patching for efficiency, adding complexity to reconciler
 * Bad, because this pattern is less common than standard Juju storage, so fewer examples exist
-* Bad, because charm needs RBAC permissions to patch StatefulSets in its namespace
+* Bad, because charm needs RBAC permissions to patch StatefulSets (requires `--trust` deployment flag)
 * Bad, because error scenarios (missing PVC, mount failures) require careful handling
-* **Unknown**, because interaction between Juju's StatefulSet management and manual patches needs testing to confirm Juju accepts these changes gracefully
+* Bad, because container name must exactly match charmcraft.yaml definition (common gotcha: using `self.app.name` doesn't work)
