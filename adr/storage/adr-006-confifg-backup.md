@@ -14,7 +14,7 @@ A critical challenge emerged: the restore process must work with Juju's storage 
 
 ## Considered Options
 
-* **Option 1**: Charmed Velero with MinIO S3-compatible storage
+* **Option 1**: Charmed Velero with S3-compatible storage
 * **Option 2**: PostgreSQL S3 backups for arr apps + Velero for others (hybrid)
 * **Option 3**: Raw Velero deployment with external S3 (no Juju integration)
 
