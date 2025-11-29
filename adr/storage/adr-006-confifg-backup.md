@@ -261,7 +261,7 @@ Once relation is established:
 2. Creates Velero Schedule CRD for daily backups
 3. Backups run automatically at configured time
 4. PVCs are backed up via volume snapshots (if supported) or file system backup
-5. Backup data stored in MinIO S3 bucket
+5. Backup data stored in a S3 bucket
 
 Users can check backup status:
 ```bash
@@ -382,7 +382,7 @@ juju status radarr
    - Extend backup spec to include schedule field
    - Velero charm creates separate Schedules per service
 
-3. **External S3 as default**: For production deployments:
+3. **External S3 as default**:
    - Document external S3 setup as primary path
    - Keep MinIO as fallback for airgapped/local scenarios
 
