@@ -24,7 +24,7 @@ The decision significantly impacts infrastructure complexity, backup strategy, r
 
 ## Decision Outcome
 
-Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. The benefits of PostgreSQL (faster restore, unified backup) do not justify the added complexity for a v1 media automation platform where disaster recovery events are rare.
+Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. The benefits of PostgreSQL (faster restore, unified backup) do not justify the added complexity for v1.
 
 ### Consequences
 
