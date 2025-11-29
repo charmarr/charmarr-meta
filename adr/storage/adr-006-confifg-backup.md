@@ -20,7 +20,7 @@ A critical challenge emerged: the restore process must work with Juju's storage 
 
 ## Decision Outcome
 
-Chosen option: **"Option 1: Charmed Velero with MinIO"**, because it provides a unified backup solution, requires minimal infrastructure (a S3 like storage), integrates cleanly with Juju through the `velero-backup-config` relation, and has stable support in Juju 3.6+ for the critical import-filesystem workflow.
+Chosen option: **"Option 1: Charmed Velero with S3 like backend"**, because it provides a unified backup solution, requires minimal infrastructure (a S3 like storage), integrates cleanly with Juju through the `velero-backup-config` relation, and has stable support in Juju 3.6+ for the critical import-filesystem workflow.
 
 ### Consequences
 
@@ -28,7 +28,7 @@ Chosen option: **"Option 1: Charmed Velero with MinIO"**, because it provides a 
 * Good, because uses Canonical's officially supported pattern with documentation and community validation
 * Good, because automated backups via relation (charms declare backup spec, Velero handles scheduling)
 * Good, because Juju 3.6+ has stable `import-filesystem` support (no experimental features or flags required)
-* Good, because MinIO can run in-cluster (no external dependencies) or use external S3 for production
+* Good, because something like MinIO can run in-cluster (no external dependencies) or use external S3
 * Good, because Velero automatically labels restored resources (`velero.io/restore-name`, `velero.io/backup-name`) making them easily identifiable among hundreds of PVs
 * Good, because proven at scale (Velero is industry standard for K8s backup)
 * Good, because relation-based integration means charms just provide spec - no manual CRD creation
