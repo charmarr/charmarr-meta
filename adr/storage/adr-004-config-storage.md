@@ -24,7 +24,7 @@ The decision significantly impacts infrastructure complexity, backup strategy, r
 
 ## Decision Outcome
 
-Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. The benefits of PostgreSQL (faster restore, unified backup) do not justify the added complexity for v1.
+Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. Charmarr v1 wouldn't support HA, but PostgresQL support will be added to charms whose upstream supports it for v2.
 
 ### Consequences
 
@@ -53,19 +53,11 @@ Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because
 
 **Why we rejected it**:
 
-1. **Still need resilient storage for other charms**: qBittorrent, SABnzbd, Jellyfin, and Plex don't support PostgreSQL.
+1. **Still need resilient storage for other charms**: qBittorrent, SABnzbd, Jellyfin, and Plex don't support PostgreSQL. So for v1, it's decided that a standard storage concept will be implemented across all the charms.
 
-2. **Two backup systems to manage**:
-   - PostgreSQL S3 backups for arr apps (via s3-integrator)
-   - A different backup system for everything else
-   - Different restore procedures for different services
-   - More operational complexity and more failure modes
+2. **Minimal restore time benefit for use case**: For a media server, disaster recovery happens maybe once a year. Saving 2 minutes per service (6 minutes total for 3 arr apps) doesn't justify doubling the infrastructure for v1.
 
-3. **Arr apps don't support true HA anyway**: Even with PostgreSQL, arr apps can't run multiple active instances concurrently. There's zero documentation or community evidence of multiple Radarr pods sharing a PostgreSQL database for HA. PostgreSQL just stores the data - it doesn't enable multi-instance operation atleast not yet.
-
-4. **Minimal restore time benefit for use case**: For a media server, disaster recovery happens maybe once a year. Saving 2 minutes per service (6 minutes total for 3 arr apps) doesn't justify doubling the infrastructure.
-
-5. **Operational overhead**: PostgreSQL cluster needs:
+3. **Operational overhead**: PostgreSQL cluster needs:
    - Connection limits management
    - Query performance monitoring
    - Database size monitoring
@@ -73,11 +65,11 @@ Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because
    - Failover testing
    - Version upgrade planning
 
-**When PostgreSQL might make sense**: As an optional feature until PostgreSQL is supported by all the core charmarr charms atleast. This is not for Charmarr v1.
+**When PostgreSQL might make sense**: For Charmarr v2 with HA support.
 
 ### Why Not Option 3: PostgreSQL for All with Charm Sync?
 
-**The idea**: Store charm state (configs, API keys, metadata) in PostgreSQL for ALL services, even those that don't natively support it. The charm would:
+**The crazy idea**: Store charm state (configs, API keys, metadata) in PostgreSQL for ALL services, even those that don't natively support it. The charm would:
 - Write application config to PostgreSQL on changes
 - Reconstitute local SQLite/ini files from PostgreSQL on restore
 - Provide unified backup via PostgreSQL S3 backups
