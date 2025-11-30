@@ -4,8 +4,7 @@
 
 **Related ADRs:**
 - [ADR-001: Shared PVC Architecture](adr-001-shared-pvc-architecture.md) - Establishes the need for a shared PVC
-- [ADR-003: Storage Backends](adr-003-storage-backends.md) - Defines backend-specific management logic
-- [ADR-004: PVC Patching in Arr Charms](adr-004-pvc-patching-in-arr-charms.md) - Defines how consuming charms receive and use PVC information
+- [ADR-003: PVC Patching in Arr Charms](adr-003-pvc-patching-in-arr-charms.md) - Defines how consuming charms receive and use PVC information
 
 ## Context and Problem Statement
 

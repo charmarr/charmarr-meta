@@ -4,7 +4,7 @@
 
 **Related ADRs:**
 - [ADR-002: Charmarr Storage Charm](adr-002-charmarr-storage-charm.md) - Defines who manages this shared PVC
-- [ADR-004: PVC Patching in Arr Charms](adr-004-pvc-patching-in-arr-charms.md) - Defines how charms mount this shared PVC
+- [ADR-003: PVC Patching in Arr Charms](adr-003-pvc-patching-in-arr-charms.md) - Defines how charms mount this shared PVC
 
 ## Context and Problem Statement
 
@@ -24,16 +24,16 @@ Chosen option: "Use a single shared PVC that all arr charms mount simultaneously
 ```mermaid
 graph TB
     PVC[Shared PVC: charmarr-shared-media]
-    
+
     PVC -->|mounted at /data| RadarrPod[Radarr Pod]
     PVC -->|mounted at /data| SonarrPod[Sonarr Pod]
     PVC -->|mounted at /data| PlexPod[Plex Pod]
     PVC -->|mounted at /data| QbitPod[qBittorrent Pod]
-    
+
     RadarrPod -.->|hardlink works| PlexPod
     SonarrPod -.->|hardlink works| PlexPod
     QbitPod -.->|hardlink works| RadarrPod
-    
+
     style PVC fill:#e1f5ff
 ```
 
