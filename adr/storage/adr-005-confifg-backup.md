@@ -51,7 +51,7 @@ Chosen option: **"Option 1: Charmed Velero with S3 like backend"**, because it p
 
 **Why we rejected it**:
 
-Major reason for not choosing this is we can't force Postgresql on users when the upstream doesn't demand it mandatorily. Especially with the infrastructure overhead that comes in with hosting another service (PostgresQL). So the base safety that Charmarr will provide is Velero based backups for all the charms in v1. But in Charmarr v2 when charms support PostgresQL, velero backups for those charms can be disabled.
+Major reason for not choosing this is we can't force Postgresql on users when the upstream doesn't demand it mandatorily. And the charms won't support PostgresQL in v1 anyway. Especially with the infrastructure overhead that comes in with hosting another service (PostgresQL). So the base safety that Charmarr will provide is Velero based backups for all the charms in v1. But in Charmarr v2 when charms support PostgresQL, velero backups for those charms can be disabled.
 
 ### Why Not Option 3: Raw Velero Without Juju Integration?
 
