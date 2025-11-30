@@ -20,7 +20,7 @@ A critical challenge emerged: the restore process must work with Juju's storage 
 
 ## Decision Outcome
 
-Chosen option: **"Option 1: Charmed Velero with S3 like backend"**, because it provides a unified backup solution, requires minimal infrastructure (a S3 like storage), integrates cleanly with Juju through the `velero-backup-config` relation, and has stable support in Juju 3.6+ for the critical import-filesystem workflow.
+Chosen option: **"Option 1: Charmed Velero with S3 like backend"**, because it provides a unified backup solution, requires minimal infrastructure (a S3 like storage), integrates cleanly with Juju through the `velero-backup-config` relation, and has stable support in Juju 3.6+ for the critical import-filesystem workflow. Important to make sure the configuration only backs up the config PVC (there could be others like logs which might make backups very expensive).
 
 ### Consequences
 
@@ -51,35 +51,7 @@ Chosen option: **"Option 1: Charmed Velero with S3 like backend"**, because it p
 
 **Why we rejected it**:
 
-1. **Two completely separate backup systems**:
-   - PostgreSQL backup system: charmed-postgres-k8s + s3-integrator + S3 storage
-   - Velero backup system: velero-operator + s3-integrator + S3 storage
-   - Different restore procedures, different failure modes, different monitoring
-
-2. **Infrastructure complexity doubles**:
-   - Without PostgreSQL: Velero + s3-integrator = 2 services
-   - With PostgreSQL: PostgreSQL (3 units) + s3-integrator (for PostgreSQL) + Velero = atleast 5 services
-
-3. **Both require S3 anyway**:
-   - PostgreSQL's charmed operator requires S3 via s3-integrator (not optional)
-   - Velero requires S3-compatible storage
-
-4. **Operational overhead**:
-   - Two backup systems to monitor
-   - Two restore procedures to document and test
-   - Two failure scenarios to plan for
-   - Inconsistent user experience (some services fast restore, others slow)
-
-5. **Marginal benefit for use case**:
-   - Saves 2 minutes per arr app on restore (6 minutes total for 3 apps)
-   - Disaster recovery is rare event (maybe once per year)
-   - Not worth doubling infrastructure complexity
-
-6. **PostgreSQL adds 3-unit cluster**:
-   - Need HA PostgreSQL cluster (3 units minimum)
-   - Adds resource consumption (CPU, memory, storage)
-   - Requires PostgreSQL expertise for troubleshooting
-   - See MADR-001 for full PostgreSQL analysis
+Major reason for not choosing this is we can't force Postgresql on users when the upstream doesn't demand it mandatorily. Especially with the infrastructure overhead that comes in with hosting another service (PostgresQL). So the base safety that Charmarr will provide is Velero based backups for all the charms in v1. But in Charmarr v2 when charms support PostgresQL, velero backups for those charms can be disabled.
 
 ### Why Not Option 3: Raw Velero Without Juju Integration?
 
