@@ -6,7 +6,7 @@ Charmarr services store critical configuration and application state that must s
 - Protects against data loss for all services
 - Supports disaster recovery scenarios with acceptable RPO/RTO
 - Integrates cleanly with Kubernetes and Juju
-- Handles PVC backups for config storage [ADR 005](adr-005-config-storage.md)
+- Handles PVC backups for config storage [ADR 006](adr-006-config-storage.md)
 - Minimizes operational complexity and infrastructure overhead
 - Works within realistic resource constraints for homelab deployments
 
