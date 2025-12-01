@@ -340,4 +340,4 @@ Every 5 minutes (update-status interval):
 
 ## Related Decisions
 
-* [Interfaces ADR-005](../interfaces/adr-002-secret-management.md): Secret Management (establishes Juju Secrets as the storage mechanism)
+* [Interfaces ADR-002](../interfaces/adr-002-secret-management.md): Secret Management (establishes Juju Secrets as the storage mechanism)
