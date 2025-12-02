@@ -134,10 +134,6 @@ class DownloadClientProvider(Object):
     def publish_data(self, data: DownloadClientProviderData) -> None:
         """Publish provider data to all relations."""
         ...
-    
-    def is_ready(self) -> bool:
-        """Check if provider has published data."""
-        ...
 
 class DownloadClientRequirerEvents(ObjectEvents):
     """Custom events for DownloadClientRequirer."""
