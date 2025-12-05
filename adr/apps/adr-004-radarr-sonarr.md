@@ -2,7 +2,9 @@
 
 ## Context and Problem Statement
 
-Charmarr requires charm implementations for media manager applications (Radarr, Sonarr, and future Lidarr). These charms share ~95% identical logic, differing only in ports, media types, and Recyclarr templates. We need to define the implementation details including reconciler pattern, Pebble configuration, storage handling, relation management, config options, actions, and OCI image selection while ensuring compliance with all previously established MADRs (storage, interfaces, authentication, Recyclarr integration).
+Charmarr requires charm implementations for media manager applications (Radarr, Sonarr, and future Lidarr). These charms share ~95% identical logic, differing only in ports, media types, and Recyclarr templates. We need to define the implementation details including reconciler pattern, Pebble configuration, storage handling, relation management, config options, actions, and OCI image selection while ensuring compliance with all previously established MADRs.
+
+**Note:** For shared arr infrastructure (ArrApiClient, reconcilers, config builders), see [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md).
 
 ## Considered Options
 
@@ -32,10 +34,6 @@ Charmarr requires charm implementations for media manager applications (Radarr, 
 * **Option 2:** LinuxServer.io images with pinned versions in charmcraft.yaml
 * **Option 3:** Hotio images
 * **Option 4:** Build Canonical Rocks for all applications
-
-### Image Tag Strategy
-* **Option 1:** Use `:latest` tag with user-controlled pinning via Juju resources
-* **Option 2:** Pin specific versions in charmcraft.yaml, update periodically
 
 ## Decision Outcome
 
@@ -81,16 +79,6 @@ def __init__(self, framework: ops.Framework):
 
 ### Recyclarr: Option 2 - Run every reconcile
 
-```python
-def _sync_trash_profiles(self) -> None:
-    profiles_config = self.config.get("trash-profiles", "").strip()
-    if not profiles_config:
-        return  # Not configured, skip
-
-    self._validate_trash_profiles(profiles_config)
-    # ... generate config and run subprocess ...
-```
-
 **Rationale:**
 - Juju spawns fresh Python process per event → instance variables reset → state tracking impossible
 - Recyclarr is idempotent and cheap (~2-5 seconds)
@@ -98,84 +86,30 @@ def _sync_trash_profiles(self) -> None:
 
 ### Status Collection: Option 2 - Collect all statuses
 
-```python
-def _collect_status(self, event: ops.CollectStatusEvent) -> None:
-    container = self.unit.get_container(self._container_name)
-
-    if not container.can_connect():
-        event.add_status(ops.WaitingStatus("Waiting for Pebble"))
-        return  # Only early-return here
-
-    # Check all conditions, add all relevant statuses
-    if not self.storage.is_ready():
-        event.add_status(ops.BlockedStatus("Missing relation: media-storage"))
-
-    if not self._workload_ready(container):
-        event.add_status(ops.WaitingStatus("Waiting for workload"))
-
-    # ... more checks ...
-
-    event.add_status(ops.ActiveStatus())
-```
-
 **Rationale:** Juju aggregates statuses and shows the worst. Collecting all statuses gives operators complete visibility into charm state rather than hiding secondary issues.
 
 ### External URL: Option 2 - Auto-configure from ingress
 
-```python
-def _configure_external_url(self) -> None:
-    if not self._ingress.is_ready():
-        return
-
-    ingress_data = self._ingress.get_data()
-    scheme = "https" if ingress_data.tls else "http"
-    external_url = f"{scheme}://{ingress_data.host}"
-
-    # Configure via API if different
-    # ...
-```
-
 **Rationale:** Ingress relation provides host and TLS status. Automation eliminates manual configuration. Follows Charmarr philosophy of "relate and it just works".
 
 ### OCI Images: Option 1 - LinuxServer.io with `:latest`
-
-**Rationale:**
 
 **Why LinuxServer.io over Hotio:**
 - Larger organization and community reduces bus factor risk
 - Matches legacy Docker Compose stack for migration continuity
 - Proven at scale across thousands of deployments
 - Multi-platform support (amd64, arm64, armhf)
-- Well-maintained by established team
 
 **Why `:latest` tag:**
-- Juju's resource model decouples images from charm code - users can pin at deploy time if needed:
-  ```bash
-  juju deploy radarr-k8s --resource radarr-image=lscr.io/linuxserver/radarr:5.14.0.9383
-  ```
-- Media apps benefit from updates (security patches, bug fixes, new features)
-- Simpler charm maintenance (no constant charmcraft.yaml updates)
-- Users expect currency (Servarr apps release frequently)
+- Juju's resource model decouples images from charm code
+- Users can pin at deploy time: `--resource radarr-image=lscr.io/linuxserver/radarr:5.14.0`
+- Media apps benefit from updates (security patches, bug fixes)
 - Juju resources are cached at deploy time, ensuring reproducibility
 
 **Why NOT Canonical Rocks:**
 - Would require replicating LinuxServer's sophisticated build pipeline
-- Need to maintain 7+ Rock definitions (one per application)
-- Must handle complex dependencies (.NET runtime, libraries)
-- Keep pace with upstream (releases every 2-4 weeks)
-- Lose community support (LinuxServer community won't help with custom Rocks)
-- **Estimated effort:** 3-6 months initial + ongoing maintenance = not worth it for v1
-- Only consider if: Canonical requires it for CharmHub status, enterprise customers demand it, or dedicated Rock maintenance team available
-
-**User control:**
-Users can pin versions at deploy time or during refresh:
-```bash
-# Pin at deploy
-juju deploy radarr-k8s --resource radarr-image=lscr.io/linuxserver/radarr:5.14.0
-
-# Pin during upgrade
-juju refresh radarr-k8s --resource radarr-image=lscr.io/linuxserver/radarr:5.15.0
-```
+- Estimated effort: 3-6 months initial + ongoing maintenance
+- Only consider if enterprise requirements demand it
 
 ## Implementation Details
 
@@ -193,32 +127,58 @@ flowchart TD
 
     P3 --> P4{Phase 4:<br/>Workload Ready?<br/>Pebble Check}
     P4 -->|No| Return3[Early Return]
-    P4 -->|Yes| P5[Phase 5:<br/>Read API Key from config.xml<br/>Store in Juju Secret<br/>Configure Root Folder<br/>Drift Detection]
+    P4 -->|Yes| P5[Phase 5:<br/>Initialize ArrApiClient<br/>Read API Key<br/>Store in Juju Secret]
 
-    P5 --> P6{Phase 6:<br/>Recyclarr Configured?}
-    P6 -->|No| P7
-    P6 -->|Yes| P6a[Sync Trash Profiles<br/>via Recyclarr]
-    P6a --> P7[Phase 7:<br/>Configure External URL<br/>from Ingress]
+    P5 --> P6[Phase 6:<br/>Reconcile Workload Config<br/>via Shared Reconcilers]
 
-    P7 --> P8[Phase 8:<br/>Publish to Relations<br/>media-indexer + media-manager]
+    P6 --> P7{Phase 7:<br/>Recyclarr Configured?}
+    P7 -->|No| P8
+    P7 -->|Yes| P7a[Sync Trash Profiles]
+    P7a --> P8[Phase 8:<br/>Publish to Relations]
 
-    P8 --> P9[Phase 9:<br/>Configure from Relations<br/>Auto-add Download Clients]
-
-    P9 --> P10{Phase 10:<br/>Is Leader?}
-    P10 -->|No| Done
-    P10 -->|Yes| P10a[Submit IstioIngressRouteConfig]
-    P10a --> Done([Reconciliation Complete])
+    P8 --> P9{Phase 9:<br/>Is Leader?}
+    P9 -->|No| Done
+    P9 -->|Yes| P9a[Submit IstioIngressRouteConfig]
+    P9a --> Done([Reconciliation Complete])
 
     style P1 fill:#e1f5ff
     style P2 fill:#e1f5ff
     style P4 fill:#e1f5ff
-    style P6 fill:#e1f5ff
-    style P10 fill:#e1f5ff
+    style P7 fill:#e1f5ff
+    style P9 fill:#e1f5ff
     style Return1 fill:#ffebee
     style Return2 fill:#ffebee
     style Return3 fill:#ffebee
     style Done fill:#e8f5e9
 ```
+
+### Phase 6: Workload Configuration via Shared Reconcilers
+
+This phase uses the shared arr infrastructure from charmarr-lib. See [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) for details on `ArrApiClient`, reconciler functions, and config builders.
+
+```python
+def _reconcile_workload_config(self) -> None:
+    """Configure workload via shared arr reconcilers."""
+    
+    # Root folder - additive only
+    reconcile_root_folder(self._api_client, self._root_folder)
+    
+    # External URL from ingress
+    if self._ingress.is_ready():
+        external_url = self._get_external_url_from_ingress()
+        reconcile_external_url(self._api_client, external_url)
+    
+    # Download clients - AGGRESSIVE: deletes anything not in relations
+    providers = self.download_clients.get_providers()
+    reconcile_download_clients(
+        api_client=self._api_client,
+        desired_clients=providers,
+        category=self._category,
+        model=self.model,
+    )
+```
+
+**Important:** Download client reconciliation is aggressive - any download client not present in Juju relations will be deleted, including manually-configured ones. See [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) for rationale.
 
 ### Pebble Layer
 
@@ -255,145 +215,15 @@ def _build_pebble_layer(self) -> ops.pebble.LayerDict:
 
 ### Storage Patching
 
-Per [Storage ADR 003](../storage/adr-003-pvc-patching-in-arr-charms.md), use lightkube to patch StatefulSet:
-
-```python
-def _ensure_shared_storage_mounted(self) -> bool:
-    if not self.storage.is_ready():
-        return False
-
-    provider = self.storage.get_provider_data()
-    if not provider:
-        return False
-
-    # Check if already mounted (idempotency)
-    if self._shared_storage_mounted():
-        return True
-
-    # Patch StatefulSet
-    client = Client()
-    sts = client.get(StatefulSet, name=self.app.name, namespace=self.model.name)
-
-    # Add volume
-    volume = Volume(
-        name="charmarr-shared-data",
-        persistentVolumeClaim=PersistentVolumeClaimVolumeSource(
-            claimName=provider.pvc_name
-        )
-    )
-
-    # Add volumeMount to container (use exact container name from charmcraft.yaml)
-    mount = VolumeMount(name="charmarr-shared-data", mountPath=provider.mount_path)
-
-    # ... apply patch ...
-    return True
-```
+Per [Storage ADR 003](../storage/adr-003-pvc-patching-in-arr-charms.md), use lightkube to patch StatefulSet for shared media storage.
 
 ### API Key Management
 
-Per [Apps ADR 002](./adr-002-cross-app-auth.md):
-
-```python
-def _ensure_api_key_secret(self) -> None:
-    """Read API key from config.xml, store in Juju Secret."""
-    container = self.unit.get_container(self._container_name)
-
-    # Read from config.xml
-    config_content = container.pull(f"{self._config_path}/config.xml").read()
-    root = ET.fromstring(config_content)
-    api_key = root.find("ApiKey").text
-
-    # Create or update secret
-    try:
-        secret = self.model.get_secret(label=f"{self.app.name}-api-key")
-        # Check drift on update-status
-    except SecretNotFoundError:
-        secret = self.app.add_secret(
-            content={"api-key": api_key},
-            label=f"{self.app.name}-api-key",
-        )
-
-    # Grant to relations
-    for relation in self.model.relations["media-indexer"]:
-        secret.grant(relation)
-    for relation in self.model.relations["media-manager"]:
-        secret.grant(relation)
-
-def _check_credential_drift(self) -> None:
-    """Detect if user changed API key via web UI."""
-    current_key = self._read_api_key_from_config()
-    secret = self.model.get_secret(label=f"{self.app.name}-api-key")
-    stored_key = secret.get_content()["api-key"]
-
-    if current_key != stored_key:
-        logger.warning("Credential drift detected - syncing")
-        secret.set_content({"api-key": current_key})
-```
-
-### Root Folder Configuration
-
-Opinionated, auto-configured:
-
-```python
-# Constants
-_root_folder = "/data/media/movies"  # Radarr
-# _root_folder = "/data/media/tv"    # Sonarr
-
-def _ensure_root_folder_configured(self) -> None:
-    api_key = self._get_api_key()
-
-    response = requests.get(
-        f"http://localhost:{self._service_port}/api/v3/rootfolder",
-        headers={"X-Api-Key": api_key}
-    )
-    existing = [rf["path"] for rf in response.json()]
-
-    if self._root_folder not in existing:
-        requests.post(
-            f"http://localhost:{self._service_port}/api/v3/rootfolder",
-            headers={"X-Api-Key": api_key},
-            json={"path": self._root_folder}
-        )
-```
+Per [Apps ADR 002](./adr-002-cross-app-auth.md), read auto-generated API key from config.xml, store in Juju Secret, detect drift on update-status.
 
 ### Recyclarr Integration
 
-Per [Apps ADR 003](./adr-003-recyclarr-integration.md):
-
-```python
-def _sync_trash_profiles(self) -> None:
-    profiles_config = self.config.get("trash-profiles", "").strip()
-    if not profiles_config:
-        return
-
-    self._validate_trash_profiles(profiles_config)
-    recyclarr_config = self._generate_recyclarr_config(profiles_config)
-
-    config_path = "/tmp/recyclarr.yml"
-    Path(config_path).write_text(recyclarr_config)
-
-    result = subprocess.run(
-        [str(Path(self.charm_dir) / "bin" / "recyclarr"), "sync", "--config", config_path],
-        capture_output=True,
-        text=True,
-        timeout=120,
-    )
-
-    if result.returncode != 0:
-        raise RecyclarrSyncError(result.stderr)
-
-def _validate_trash_profiles(self, profiles_config: str) -> None:
-    profiles = [p.strip().lower() for p in profiles_config.split(",")]
-
-    indicators_1080p = {"1080p", "hd-", "hd_"}
-    indicators_4k = {"2160p", "uhd-", "uhd_", "4k"}
-
-    has_1080p = any(any(ind in p for ind in indicators_1080p) for p in profiles)
-    has_4k = any(any(ind in p for ind in indicators_4k) for p in profiles)
-
-    if has_1080p and has_4k:
-        raise ValueError("Cannot mix 1080p and 4K profiles")
-```
+Per [Apps ADR 003](./adr-003-recyclarr-integration.md), embed Recyclarr binary in charm, run on reconcile if `trash-profiles` config is set.
 
 ## charmcraft.yaml
 
@@ -529,45 +359,12 @@ actions:
 | Service port | 7878 | 8989 |
 | Root folder | `/data/media/movies` | `/data/media/tv` |
 | Manager enum | `MediaManager.RADARR` | `MediaManager.SONARR` |
-| Trash profile examples | hd-bluray-web, uhd-bluray-web, anime | web-1080p, web-2160p, anime |
+| Category (for DCs) | `radarr` | `sonarr` |
+| Trash profile examples | hd-bluray-web, uhd-bluray-web | web-1080p, web-2160p |
 | Image | `lscr.io/linuxserver/radarr:latest` | `lscr.io/linuxserver/sonarr:latest` |
 | Trash Guides URL | https://trash-guides.info/Radarr/ | https://trash-guides.info/Sonarr/ |
 
-All other implementation (reconciler, relations, config, actions, storage, libraries) is identical.
-
-## README Documentation
-
-### OCI Images Section
-
-```markdown
-## OCI Images
-
-Charmarr uses [LinuxServer.io](https://linuxserver.io) images by default:
-- Well-maintained by established community
-- Multi-architecture support (amd64, arm64)
-- Matches legacy Docker Compose stacks for migration continuity
-- Proven at scale across thousands of deployments
-
-Images default to `:latest` tag for automatic updates. Pin to specific versions if you need stability:
-
-```bash
-# Pin at deploy
-juju deploy radarr-k8s \
-  --resource radarr-image=lscr.io/linuxserver/radarr:5.14.0.9383
-
-# Pin during upgrade
-juju refresh radarr-k8s \
-  --resource radarr-image=lscr.io/linuxserver/radarr:5.15.0.9456
-```
-
-Check available versions:
-- [LinuxServer Radarr tags](https://hub.docker.com/r/linuxserver/radarr/tags)
-- [LinuxServer Sonarr tags](https://hub.docker.com/r/linuxserver/sonarr/tags)
-
-## Deferred to v1.x/v2
-
-- **Observability integrations:** grafana-dashboard, metrics-endpoint, logging relations
-- **PostgreSQL support:** Native SQLite only in v1
+All other implementation (reconciler phases, relations, config options, actions, storage, shared reconcilers) is identical.
 
 ## Consequences
 
@@ -577,29 +374,24 @@ Check available versions:
 * Reconciler pattern ensures idempotent, self-healing behavior
 * Pebble checks provide robust readiness detection
 * Auto-configuration minimizes user setup (root folder, external URL, download clients)
-* Drift detection handles users changing credentials via web UI
-* Recyclarr integration provides Trash Guides quality profiles out of the box
+* Shared arr infrastructure eliminates code duplication (see [lib/adr-001](../lib/adr-001-arr-shared-infrastructure.md))
 * LinuxServer images provide production stability with large community support
-* `:latest` tag with user-controlled pinning balances currency with stability
-* Compliant with all existing MADRs (storage, interfaces, auth)
+* Compliant with all existing MADRs
 
 ### Bad
 
 * Requires `--trust` for RBAC permissions (StatefulSet patching)
-* lightkube dependency for storage patching adds complexity
-* Recyclarr runs every reconcile (acceptable cost for simplicity)
+* Aggressive reconciliation deletes manually-configured items (documented behavior)
 * No observability in v1 (deferred)
-* Canonical Rocks rejected means no official Canonical image support (acceptable tradeoff)
 
-### Neutral
+## Deferred to v1.x/v2
 
-* LinuxServer images chosen over Hotio (well-maintained, matches legacy stack)
-* `:latest` tag chosen over pinned versions (Juju resource model enables user control)
-* Two config options only (minimal, opinionated)
-* Two actions only (sync-trash-profiles, rotate-api-key)
+- **Observability integrations:** grafana-dashboard, metrics-endpoint, logging relations
+- **PostgreSQL support:** Native SQLite only in v1
 
 ## Related MADRs
 
+- [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) - ArrApiClient, shared reconcilers, config builders
 - [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Shared PVC architecture
 - [storage/adr-003](../storage/adr-003-pvc-patching-in-arr-charms.md) - StatefulSet patching via lightkube
 - [storage/adr-004](../storage/adr-004-config-storage.md) - Config storage (native SQLite)
@@ -607,5 +399,5 @@ Check available versions:
 - [interfaces/adr-004](../interfaces/adr-004-download-client.md) - download-client interface
 - [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - media-storage interface
 - [interfaces/adr-006](../interfaces/adr-006-media-manager.md) - media-manager interface
-- [apps/adr-002](../apps/adr-002-cross-app-auth.md) - Authentication and credential management
-- [apps/adr-003](../apps/adr-003-recyclarr-integration.md) - Recyclarr integration
+- [apps/adr-002](./adr-002-cross-app-auth.md) - Authentication and credential management
+- [apps/adr-003](./adr-003-recyclarr-integration.md) - Recyclarr integration
