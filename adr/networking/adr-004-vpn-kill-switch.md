@@ -17,13 +17,17 @@ Download clients must never leak traffic to the internet if the VPN disconnects 
 
 Chosen option: **"NetworkPolicy + gluetun firewall (two-layer defense)"**, because NetworkPolicy catches routing misconfigurations (init container failures, deleted routes) that occur before traffic reaches the gateway, while gluetun's firewall catches VPN disconnections at the gateway itself. This follows k8s@home's battle-tested pattern and provides defense in depth.
 
+### NetworkPolicy Ownership
+
+Consumer charms create and manage their own NetworkPolicy resources via vpn-k8s-lib's `VPNGatewayRequirer.reconcile()` method. This maintains clean resource ownership - the gluetun-k8s charm only provides connection data, consumers are responsible for their own network restrictions.
+
 ```mermaid
 graph TD
     A[Download Client Pod] -->|dst: external IP| B{Routing Table}
     B -->|VXLAN route exists| C[vxlan0 interface]
     B -->|VXLAN route missing| D{NetworkPolicy}
 
-    C --> E[pod-gateway receives]
+    C --> E[gluetun pod receives]
     E --> F{Gluetun Firewall}
     F -->|VPN connected| G[tun0 → VPN tunnel]
     F -->|VPN disconnected| H[BLOCKED ❌]
@@ -36,38 +40,88 @@ graph TD
     style G fill:#51cf66
 ```
 
+### Two Layers Explained
+
+**Layer 1: Consumer NetworkPolicy (catches routing failures)**
+
+If the pod-gateway client init container fails, or VXLAN routes get deleted, or the VXLAN interface goes down - traffic would try to go via the pod's default route (directly to internet). NetworkPolicy blocks this because the destination IP isn't in the allowed cluster CIDRs.
+
+**Layer 2: Gluetun Firewall (catches VPN disconnection)**
+
+If VXLAN routing works but the VPN tunnel inside gluetun disconnects, traffic arrives at gluetun but can't exit. Gluetun's built-in firewall blocks all non-VPN egress traffic.
+
+### NetworkPolicy Specification
+
+Created by vpn-k8s-lib when consumer relates to VPN gateway:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: qbittorrent-vpn-killswitch
+  namespace: charmarr-downloads
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: qbittorrent
+  policyTypes:
+    - Egress
+  egress:
+    # Allow cluster pod CIDR
+    - to:
+        - ipBlock:
+            cidr: 10.42.0.0/16
+    # Allow cluster service CIDR  
+    - to:
+        - ipBlock:
+            cidr: 10.96.0.0/12
+    # Allow DNS
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+```
+
+### How VXLAN Traffic Bypasses the Block
+
+1. Download client sends packet to external IP (e.g., 1.2.3.4)
+2. Routing table has VXLAN route: default via 172.16.0.1 dev vxlan0
+3. Packet encapsulated in VXLAN: **outer destination = gateway pod IP (in cluster CIDR)**
+4. NetworkPolicy evaluates outer packet: destination in cluster CIDR → ALLOWED
+5. Packet reaches gateway pod, gets decapsulated
+6. Gluetun routes through VPN tunnel
+
+The key insight: VXLAN encapsulation makes external traffic look like cluster-internal traffic to NetworkPolicy.
+
 ### Consequences
 
-* Good, because NetworkPolicy enforced at host node (outside pod namespace, can't be bypassed even if pod compromised)
-* Good, because NetworkPolicy catches routing failures (init container didn't run, VXLAN interface down, routes deleted)
+* Good, because NetworkPolicy enforced at node level (outside pod, can't be bypassed if pod compromised)
+* Good, because NetworkPolicy catches routing failures (init container didn't run, VXLAN down, routes deleted)
 * Good, because gluetun firewall catches VPN disconnections at the gateway
 * Good, because defense in depth - two independent enforcement points
-* Good, because VXLAN traffic allowed (outer packet dst = gateway pod IP in cluster CIDR)
-* Bad, because requires cluster CIDR discovery and configuration in NetworkPolicy
+* Good, because consumer ownership of NetworkPolicy maintains clean resource boundaries
+* Good, because NetworkPolicy automatically allows VXLAN traffic (encapsulated to cluster IP)
+* Bad, because requires accurate cluster CIDR discovery for NetworkPolicy
 * Bad, because two systems to understand (but both are standard Kubernetes/VPN patterns)
 
-**NetworkPolicy allows:**
-* Cluster pod CIDR (10.0.0.0/8 or auto-discovered)
-* Cluster service CIDR (10.96.0.0/12 or auto-discovered)
-* DNS (kube-system namespace, port 53)
-
-**NetworkPolicy blocks:**
-* All other egress (external IPs not in cluster CIDR)
-
-**How VXLAN traffic bypasses the block:**
-1. Download client sends to external IP (1.2.3.4)
-2. Routing table matches VXLAN route
-3. Packet encapsulated: **outer dst = gateway pod IP (cluster CIDR)**
-4. NetworkPolicy evaluates outer packet: dst in cluster CIDR → ALLOWED
-5. Gateway decapsulates, gluetun enforces VPN
-
 **Rejected alternatives:**
-* Gluetun only: Doesn't catch routing failures (if VXLAN doesn't set up, traffic leaks via default route)
-* NetworkPolicy only: Doesn't protect against VPN disconnection at gateway (would need to detect and reconfigure)
-* Istio AuthorizationPolicy: Operates at Layer 7/4, only sees ztunnel-intercepted traffic, misses VXLAN traffic (wrong layer for IP routing control)
 
-**Why NOT Istio AuthorizationPolicy:**
-* AuthorizationPolicy enforcement point: ztunnel (inside pod, sees only eth0 traffic)
-* VXLAN traffic uses vxlan0 interface, bypasses ztunnel entirely
-* AuthorizationPolicy has no visibility into routing table decisions
-* Layer mismatch: AuthorizationPolicy is Layer 7/4 (HTTP/TCP), kill switch needs Layer 3 (IP)
+* Gluetun only: Doesn't catch routing failures. If VXLAN never sets up, traffic goes direct to internet via pod's default route.
+* NetworkPolicy only: Doesn't protect against VPN disconnection at gateway. Traffic would arrive at gateway but have nowhere to go (less severe, but still a failure mode).
+* Istio AuthorizationPolicy: Operates at Layer 7/4, only sees ztunnel-intercepted traffic. VXLAN traffic uses vxlan0 interface which bypasses ztunnel entirely. Wrong layer for IP routing control.
+
+### Failure Scenarios
+
+| Scenario | Layer 1 (NetworkPolicy) | Layer 2 (Gluetun) | Result |
+|----------|------------------------|-------------------|--------|
+| Normal operation | Allows VXLAN (encap to cluster IP) | Allows via tun0 | ✅ Traffic flows |
+| Client init container fails | Blocks direct egress | N/A (traffic never arrives) | ✅ Blocked |
+| VXLAN interface down | Blocks direct egress | N/A (traffic never arrives) | ✅ Blocked |
+| Gateway pod restarts | Client sidecar detects, resets VXLAN | N/A | ✅ Self-heals |
+| VPN disconnects | Allows VXLAN traffic through | Blocks at firewall | ✅ Blocked |
+| VPN provider blocks IP | Allows VXLAN traffic through | Blocks (no route via tun0) | ✅ Blocked |
