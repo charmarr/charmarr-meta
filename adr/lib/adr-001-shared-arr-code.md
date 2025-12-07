@@ -72,7 +72,7 @@ Without tracking "things I've ever created" (which requires state), we can't imp
 charmarr-lib/
 ├── interfaces/
 │   ├── media_indexer.py        # Relation interface classes + data models
-│   ├── download_client.py
+│   ├── download_client.py      # + MEDIA_TYPE_DOWNLOAD_PATHS constant
 │   ├── media_manager.py
 │   ├── media_storage.py
 │   └── vpn_gateway.py
@@ -95,6 +95,65 @@ Normally, app-specific code belongs in the charm, not the shared library. We mak
 **Counter-example:** Overseerr's API is unique and only used by the Overseerr charm. Its API client stays in the charm, NOT in charmarr-lib.
 
 **Rule:** Only add to charmarr-lib if code is actually reused across multiple charms.
+
+## Shared Constants
+
+### MEDIA_TYPE_DOWNLOAD_PATHS
+
+This constant maps media manager types to their download folder names. It's used by:
+- **Download client charms** (qBittorrent, SABnzbd) - to create categories with correct save paths
+- **Arr charms** - to know where downloads will land (for import path configuration)
+
+```python
+# In charmarr_lib/interfaces/download_client.py
+
+from enum import Enum
+
+class MediaManager(str, Enum):
+    """Media manager applications."""
+    RADARR = "radarr"
+    SONARR = "sonarr"
+    LIDARR = "lidarr"
+    READARR = "readarr"
+    WHISPARR = "whisparr"
+
+MEDIA_TYPE_DOWNLOAD_PATHS: dict[MediaManager, str] = {
+    MediaManager.RADARR: "movies",
+    MediaManager.SONARR: "tv",
+    MediaManager.LIDARR: "music",
+    MediaManager.READARR: "books",
+    MediaManager.WHISPARR: "xxx",
+}
+```
+
+**Usage in download client charms:**
+
+```python
+from charmarr_lib.interfaces.download_client import (
+    MEDIA_TYPE_DOWNLOAD_PATHS,
+    MediaManager,
+)
+
+def _get_category_path(self, manager: MediaManager) -> str:
+    """Get save path for a media manager's category."""
+    type_folder = MEDIA_TYPE_DOWNLOAD_PATHS.get(manager, "other")
+
+    # qBittorrent: absolute path
+    return f"/data/torrents/{type_folder}"
+
+    # SABnzbd: relative path (in separate method)
+    # return type_folder
+```
+
+**Why in charmarr-lib, not duplicated:**
+- Single source of truth for folder naming convention
+- Ensures Trash Guides compliance across all charms
+- Adding a new media type (e.g., Whisparr) updates all charms automatically
+
+**Why NOT a full shared abstraction for download clients:**
+- qBittorrent and SABnzbd have completely different APIs (~20% similar vs arr's ~95%)
+- Category creation logic differs (absolute vs relative paths, different endpoints)
+- Only the constant is truly shared; forcing more would create a leaky abstraction
 
 ## ArrApiClient
 
@@ -437,6 +496,7 @@ Radarr/Sonarr have bulk endpoints:
 * **Testable**: Each layer can be unit tested independently
 * **Reusable**: ArrApiClient works for any arr app, even outside Charmarr
 * **DRY**: Hundreds of lines shared across Radarr/Sonarr/Lidarr
+* **Shared constants**: `MEDIA_TYPE_DOWNLOAD_PATHS` ensures consistent folder naming
 
 ### Bad
 
@@ -449,6 +509,7 @@ Radarr/Sonarr have bulk endpoints:
 
 * **Documentation requirement**: Must clearly document aggressive reconciliation behavior
 * **Arr-specific code in lib**: Exception to "charm code stays in charm" rule, justified by reuse
+* **Download client constants only**: Full abstraction not warranted for qBit/SAB due to API differences
 
 ## Documentation Requirements
 
@@ -465,6 +526,7 @@ Radarr/Sonarr have bulk endpoints:
 ## Related MADRs
 
 - [apps/adr-004-radarr-sonarr](../apps/adr-004-radarr-sonarr.md) - Media manager charm implementation
+- [apps/adr-007-download-clients](../apps/adr-007-download-clients.md) - Download client charm implementation
 - [interfaces/adr-004-download-client](../interfaces/adr-004-download-client.md) - Download client interface data models
 - [interfaces/adr-003-media-indexer](../interfaces/adr-003-media-indexer.md) - Media indexer interface data models
 - [apps/adr-002-cross-app-auth](../apps/adr-002-cross-app-auth.md) - Credential management and secret handling
