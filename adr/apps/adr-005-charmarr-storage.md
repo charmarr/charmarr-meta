@@ -8,6 +8,7 @@ Per [Storage ADR-002](../storage/adr-002-charmarr-storage-charm.md), Charmarr re
 - How do we implement a workload-less Juju charm that manages K8s resources without running a container?
 - How do we handle smart PVC binding checks across different StorageClass configurations?
 - How do we detect and surface access-mode mismatches?
+- How do we coordinate file ownership (PUID/PGID) across all consuming applications?
 - What config options and actions do we need?
 
 ## Considered Options
@@ -35,6 +36,11 @@ Per [Storage ADR-002](../storage/adr-002-charmarr-storage-charm.md), Charmarr re
 * **Option 3:** Make it configurable with default ReadWriteMany
 * **Option 4:** Query StorageClass capabilities and auto-select
 
+### PUID/PGID Management
+* **Option 1:** Hardcoded defaults (1000:1000)
+* **Option 2:** Configurable via charm config, published to relation
+* **Option 3:** Auto-detect from existing files on PVC
+
 ### Actions
 * **Option 1:** `expand-storage` action + `get-info` action
 * **Option 2:** Size via config only, `get-info` for debugging
@@ -47,6 +53,7 @@ Per [Storage ADR-002](../storage/adr-002-charmarr-storage-charm.md), Charmarr re
 **State: Option 2 - Stateless**
 **Expansion: Option 2 - Reactive, let K8s surface errors**
 **Access Mode: Option 3 - Configurable with RWM default**
+**PUID/PGID: Option 2 - Configurable, published to relation**
 **Actions: Option 3 - No actions**
 
 ### Rationale
@@ -82,6 +89,14 @@ Per [Storage ADR-002](../storage/adr-002-charmarr-storage-charm.md), Charmarr re
 - Default to ReadWriteMany (more flexible, multi-node capable)
 - Clear error detection if StorageClass doesn't support RWM
 - Native-NFS always uses RWM (ignored config)
+
+**Configurable PUID/PGID:**
+- LinuxServer.io containers use PUID/PGID for file ownership
+- All apps writing to shared storage must use same UID/GID
+- Storage charm is single source of truth - publishes to consumers
+- Default 1000:1000 works for most setups
+- Configurable for NFS exports with specific ownership requirements
+- See [Interfaces ADR-005](../interfaces/adr-005-media-storage.md) for interface details
 
 **No actions:**
 - Size changes via config (standard Juju pattern)
@@ -134,6 +149,9 @@ description: |
 
   This is a workload-less charm - it manages K8s resources via API calls
   without running any container workload.
+
+  Publishes PUID/PGID to all connected applications for consistent
+  file ownership across the media stack.
 
 links:
   documentation: https://github.com/charmarr/charmarr-storage-k8s
@@ -232,11 +250,42 @@ config:
 
         If StorageClass doesn't support ReadWriteMany, charm will detect
         and suggest changing to ReadWriteOnce.
+
+    puid:
+      type: int
+      default: 1000
+      description: |
+        User ID for file ownership. Published to all connected applications.
+        
+        All LinuxServer.io containers will run as this UID, ensuring
+        consistent file ownership across the entire media stack.
+        
+        Default 1000 is the standard first non-root user on most Linux systems.
+        
+        For NFS backends, set this to match your NFS export's expected UID.
+
+    pgid:
+      type: int
+      default: 1000
+      description: |
+        Group ID for file ownership. Published to all connected applications.
+        
+        All LinuxServer.io containers will use this GID, ensuring
+        consistent file ownership across the entire media stack.
+        
+        Default 1000 is the standard first non-root group on most Linux systems.
+        
+        For NFS backends, set this to match your NFS export's expected GID.
 ```
 
 ### Reconciler Implementation Pattern
 
 ```python
+from charms.charmarr_lib.v0.media_storage import (
+    MediaStorageProvider,
+    MediaStorageProviderData,
+)
+
 class CharmarrStorageCharm(ops.CharmBase):
     _pvc_name = "charmarr-shared-media"
     _pv_name = "charmarr-shared-media-pv"  # Only for native-nfs
@@ -280,10 +329,12 @@ class CharmarrStorageCharm(ops.CharmBase):
         else:
             return  # BlockedStatus
 
-        # Phase 4: Publish to relations
+        # Phase 4: Publish to relations (including PUID/PGID)
         self.storage_provider.publish_data(MediaStorageProviderData(
             pvc_name=self._pvc_name,
-            mount_path=self._mount_path
+            mount_path=self._mount_path,
+            puid=self.config.get("puid", 1000),
+            pgid=self.config.get("pgid", 1000),
         ))
 ```
 
@@ -352,7 +403,7 @@ flowchart TD
     SC --> P3{Phase 3:<br/>PVC Phase?}
     NFS --> P3
 
-    P3 -->|Bound| P4[Phase 4:<br/>Publish to Relations]
+    P3 -->|Bound| P4[Phase 4:<br/>Publish to Relations<br/>pvc_name, mount_path,<br/>puid, pgid]
 
     P3 -->|Pending| P3a{Backend<br/>Type?}
     P3a -->|native-nfs| B5[BlockedStatus:<br/>NFS PVC should bind immediately]
@@ -369,7 +420,7 @@ flowchart TD
     P3 -->|Lost/Other| B7[BlockedStatus:<br/>PVC in unexpected state]
 
     P4 --> Status{PVC<br/>Phase?}
-    Status -->|Bound| A1[ActiveStatus:<br/>Storage ready]
+    Status -->|Bound| A1[ActiveStatus:<br/>Storage ready<br/>PUID/PGID: 1000/1000]
     Status -->|Pending + WaitForFirstConsumer| A2[ActiveStatus:<br/>Ready - will bind on first mount]
 
     style P1 fill:#e1f5ff
@@ -421,13 +472,16 @@ juju deploy charmarr-storage-k8s charmarr-storage --trust \
   --config size=2Ti
 ```
 
-### Native NFS Backend
+### Native NFS Backend with Custom UID/GID
 ```bash
+# NFS export configured with ownership 1050:1050
 juju deploy charmarr-storage-k8s charmarr-storage --trust \
   --config backend-type=native-nfs \
   --config nfs-server=192.168.1.100 \
   --config nfs-path=/mnt/pool/charmarr-media \
-  --config size=5Ti
+  --config size=5Ti \
+  --config puid=1050 \
+  --config pgid=1050
 ```
 
 ### Expanding Storage
@@ -511,6 +565,7 @@ Grants permissions for:
 - NFS server must be accessible from cluster nodes
 - NFS export must exist and be properly configured
 - Network connectivity from nodes to NFS server
+- UID/GID configured to match NFS export permissions
 
 ## Consequences
 
@@ -523,7 +578,8 @@ Grants permissions for:
 * **Access-mode mismatch detection** → clear error messages guide users to fix, not silent failure
 * **Idempotent operations** → safe to run reconcile repeatedly, handles expansion gracefully
 * **Backend flexibility** → supports both managed StorageClass and self-managed NFS
-* **Simple configuration** → 5 config options cover all use cases without overloading
+* **Centralized PUID/PGID** → single source of truth for file ownership across all apps
+* **Simple configuration** → sensible defaults, explicit config for advanced setups
 * **No unnecessary actions** → size changes via config (standard Juju pattern)
 * **Compliant with ADRs** → implements all decisions from storage and interface ADRs
 
@@ -540,8 +596,7 @@ Grants permissions for:
 
 * **Two backend modes** → adds conditional logic but necessary for flexibility
 * **Reactive error handling** → simpler implementation, relies on K8s native error reporting
-* **Five config options** → more than minimal but each serves clear purpose
-* **No observability integrations** → deferred to v1.x (grafana-dashboard, metrics-endpoint)
+* **PUID/PGID coupling** → apps depend on storage for ownership (but already depend on it for PVC)
 
 ## Deferred to v1.x/v2
 
@@ -549,10 +604,11 @@ Grants permissions for:
 - **PVC condition monitoring:** Surface expansion failures in charm status
 - **Proactive capacity checking:** Validate backend capacity before expansion requests
 - **Multiple PVC support:** Currently single shared PVC, could support per-app PVCs in future
+- **UID/GID auto-detection:** Detect ownership from existing files on PVC
 
 ## Related MADRs
 
 - [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Establishes need for shared PVC with hardlinks
 - [storage/adr-002](../storage/adr-002-charmarr-storage-charm.md) - Defines storage charm's responsibilities and backend options
-- [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - Defines media-storage interface and data models
+- [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - Defines media-storage interface data models including PUID/PGID
 - [storage/adr-003](../storage/adr-003-pvc-patching-in-arr-charms.md) - Defines how requiring charms mount the shared PVC

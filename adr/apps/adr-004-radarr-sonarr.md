@@ -35,6 +35,10 @@ Charmarr requires charm implementations for media manager applications (Radarr, 
 * **Option 3:** Hotio images
 * **Option 4:** Build Canonical Rocks for all applications
 
+### Download Client Category Configuration
+* **Option 1:** Category name in relation data
+* **Option 2:** Use media manager's own app name as category (no relation data needed)
+
 ## Decision Outcome
 
 ### Reconciler: Option 2 - Hybrid event observation
@@ -111,6 +115,14 @@ def __init__(self, framework: ops.Framework):
 - Estimated effort: 3-6 months initial + ongoing maintenance
 - Only consider if enterprise requirements demand it
 
+### Download Client Category: Option 2 - Use app name as category
+
+**Rationale:**
+- No category field needed in relation data - simplifies interface
+- Each media manager uses its own `self.app.name` as category (e.g., `radarr`, `radarr-4k`)
+- Download clients create matching categories with appropriate save paths
+- Multiple instances naturally supported (`radarr-4k` → category `radarr-4k`)
+
 ## Implementation Details
 
 ### Reconciler Phases
@@ -173,12 +185,89 @@ def _reconcile_workload_config(self) -> None:
     reconcile_download_clients(
         api_client=self._api_client,
         desired_clients=providers,
-        category=self._category,
+        category=self.app.name,  # Use own app name as category
         model=self.model,
     )
 ```
 
 **Important:** Download client reconciliation is aggressive - any download client not present in Juju relations will be deleted, including manually-configured ones. See [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) for rationale.
+
+### Download Client Category Configuration
+
+When configuring a download client in Radarr/Sonarr, the charm sets the category to its own application name:
+
+```python
+def _build_qbittorrent_config(
+    self,
+    provider: DownloadClientProviderData,
+) -> dict:
+    """Build qBittorrent download client config for Radarr API."""
+    return {
+        "enable": True,
+        "protocol": "torrent",
+        "priority": 1,
+        "name": provider.instance_name,
+        "implementation": "QBittorrent",
+        "configContract": "QBittorrentSettings",
+        "fields": [
+            {"name": "host", "value": self._parse_host(provider.api_url)},
+            {"name": "port", "value": self._parse_port(provider.api_url)},
+            {"name": "useSsl", "value": provider.api_url.startswith("https")},
+            {"name": "urlBase", "value": provider.base_path or ""},
+            {"name": "username", "value": self._get_username(provider)},
+            {"name": "password", "value": self._get_password(provider)},
+            # Category = this charm's app name
+            {"name": "movieCategory", "value": self.app.name},  # Radarr
+            # For Sonarr: {"name": "tvCategory", "value": self.app.name},
+            {"name": "recentMoviePriority", "value": 0},
+            {"name": "olderMoviePriority", "value": 0},
+            {"name": "initialState", "value": 0},
+            {"name": "sequentialOrder", "value": False},
+            {"name": "firstAndLast", "value": False},
+        ],
+        "removeCompletedDownloads": True,
+        "removeFailedDownloads": True,
+        "tags": [],
+    }
+
+def _build_sabnzbd_config(
+    self,
+    provider: DownloadClientProviderData,
+) -> dict:
+    """Build SABnzbd download client config for Radarr API."""
+    return {
+        "enable": True,
+        "protocol": "usenet",
+        "priority": 1,
+        "name": provider.instance_name,
+        "implementation": "Sabnzbd",
+        "configContract": "SabnzbdSettings",
+        "fields": [
+            {"name": "host", "value": self._parse_host(provider.api_url)},
+            {"name": "port", "value": self._parse_port(provider.api_url)},
+            {"name": "useSsl", "value": provider.api_url.startswith("https")},
+            {"name": "urlBase", "value": provider.base_path or ""},
+            {"name": "apiKey", "value": self._get_api_key(provider)},
+            # Category = this charm's app name
+            {"name": "movieCategory", "value": self.app.name},  # Radarr
+            # For Sonarr: {"name": "tvCategory", "value": self.app.name},
+            {"name": "recentMoviePriority", "value": -100},
+            {"name": "olderMoviePriority", "value": -100},
+        ],
+        "removeCompletedDownloads": True,
+        "removeFailedDownloads": True,
+        "tags": [],
+    }
+```
+
+**Category naming convention:**
+- `radarr` → category `radarr`
+- `radarr-4k` → category `radarr-4k`
+- `sonarr` → category `sonarr`
+
+The download client charms (qBittorrent, SABnzbd) are responsible for creating matching categories with appropriate save paths. See:
+- [apps/adr-007-qbittorrent](./adr-007-qbittorrent.md)
+- [apps/adr-008-sabnzbd](./adr-008-sabnzbd.md)
 
 ### Pebble Layer
 
@@ -359,7 +448,7 @@ actions:
 | Service port | 7878 | 8989 |
 | Root folder | `/data/media/movies` | `/data/media/tv` |
 | Manager enum | `MediaManager.RADARR` | `MediaManager.SONARR` |
-| Category (for DCs) | `radarr` | `sonarr` |
+| Category field | `movieCategory` | `tvCategory` |
 | Trash profile examples | hd-bluray-web, uhd-bluray-web | web-1080p, web-2160p |
 | Image | `lscr.io/linuxserver/radarr:latest` | `lscr.io/linuxserver/sonarr:latest` |
 | Trash Guides URL | https://trash-guides.info/Radarr/ | https://trash-guides.info/Sonarr/ |
@@ -376,6 +465,7 @@ All other implementation (reconciler phases, relations, config options, actions,
 * Auto-configuration minimizes user setup (root folder, external URL, download clients)
 * Shared arr infrastructure eliminates code duplication (see [lib/adr-001](../lib/adr-001-arr-shared-infrastructure.md))
 * LinuxServer images provide production stability with large community support
+* Category = app name means no relation data needed, multiple instances just work
 * Compliant with all existing MADRs
 
 ### Bad
@@ -401,3 +491,5 @@ All other implementation (reconciler phases, relations, config options, actions,
 - [interfaces/adr-006](../interfaces/adr-006-media-manager.md) - media-manager interface
 - [apps/adr-002](./adr-002-cross-app-auth.md) - Authentication and credential management
 - [apps/adr-003](./adr-003-recyclarr-integration.md) - Recyclarr integration
+- [apps/adr-007-qbittorrent](./adr-007-qbittorrent.md) - qBittorrent charm with category creation
+- [apps/adr-008-sabnzbd](./adr-008-sabnzbd.md) - SABnzbd charm with category creation
