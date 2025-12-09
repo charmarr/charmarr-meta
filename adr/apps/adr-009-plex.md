@@ -2,125 +2,141 @@
 
 ## Context and Problem Statement
 
-Charmarr requires a Plex Media Server charm to provide media streaming capabilities. Plex is the primary media server for v1, with Jellyfin planned for v1.2. The charm must handle Plex's unique characteristics including claim token authentication, hardware transcoding, and remote access configuration.
+Charmarr requires a Plex Media Server charm to serve media to users. Unlike arr apps, Plex doesn't need programmatic integration with other Charmarr components - it simply watches the filesystem for media files. The charm needs to handle initial server claiming, hardware transcoding, and storage integration.
 
-Key challenges:
-- Plex claim tokens expire in 4 minutes and are single-use
-- Hardware transcoding requires `/dev/dri` device access
-- Remote access requires user configuration of custom server URLs
-- Plex uses SQLite (no HA possible)
+**Key insight:** Plex does NOT need a relation to Overseerr. Overseerr discovers Plex servers automatically via plex.tv after the user completes OAuth. Users select their Plex server from a dropdown - they don't enter URLs manually. Therefore, no `media-server` interface is needed.
 
 ## Considered Options
 
-### Claim Token Handling
-* **Option 1:** Charm config option for claim token
-* **Option 2:** Juju action for claiming server
-* **Option 3:** User claims via web UI only
+### Initial Server Claiming
+* **Option 1:** Require claim token via config before first start
+* **Option 2:** Manual claiming via web UI after deployment
+* **Option 3:** Both - optional config for automation, manual as fallback
 
 ### Hardware Transcoding
-* **Option 1:** Always mount `/dev/dri` (fail if not available)
+* **Option 1:** Always mount /dev/dri (fails on nodes without Intel iGPU)
 * **Option 2:** Config option to enable hardware transcoding
-* **Option 3:** Auto-detect GPU and configure
+* **Option 3:** Auto-detect GPU availability
 
-### Remote Access Configuration
-* **Option 1:** Charm auto-configures custom server URL from ingress
-* **Option 2:** User configures via Plex UI after deployment
-* **Option 3:** Charm config option for custom URL
+### Plex-to-Overseerr Integration
+* **Option 1:** Create `media-server` interface for URL sharing
+* **Option 2:** No interface - Overseerr auto-discovers via plex.tv
 
 ## Decision Outcome
 
-**Claim Token: Option 2** - Juju action (with Option 3 as alternative)
-**Hardware Transcoding: Option 2** - Config option
-**Remote Access: Option 2** - User configures via Plex UI
+**Claiming: Option 3** - Both methods supported. Config option for automation, manual claiming always available.
 
-### Rationale
+**Hardware transcoding: Option 2** - Config option. Not all nodes have Intel iGPU, and Plex Pass is required.
 
-**Claim via action** because:
-- `PLEX_CLAIM` env var expires in 4 minutes, single-use
-- Storing in config leaves expired token visible forever
-- Action is ephemeral: set env var, restart, token never persisted
-- Alternative: user can claim via web UI (works fine, just manual)
+**Overseerr integration: Option 2** - No interface needed. After OAuth, Overseerr queries plex.tv which returns all Plex servers the user has access to. User selects from dropdown - no URL typing required.
 
-**Hardware transcoding as config option** because:
-- Not all nodes have Intel QuickSync/GPU
-- Charm shouldn't fail if hardware not available
-- User explicitly opts in when hardware is available
-- Same StatefulSet patching pattern as VPN and storage
+### Why No media-server Interface?
 
-**User configures remote access** because:
-- Remote access method varies: Tailscale, Cloudflare Tunnel, port forwarding, VPS
-- Charm has no visibility into user's chosen method
-- One-time configuration, rarely changed
-- Drift detection adds complexity for minimal value
+We initially planned a `media-server` interface for Plex to publish its URL to Overseerr. Research revealed this adds zero value:
+
+1. **Overseerr setup flow:**
+   - User signs into Overseerr with Plex account (OAuth)
+   - User clicks "refresh" button next to Server dropdown
+   - Overseerr queries plex.tv with user's auth token
+   - plex.tv returns list of all Plex servers user has access to
+   - User selects server from dropdown (auto-populated)
+
+2. **Why pre-filling doesn't help:**
+   - Users don't type URLs - they select from dropdown
+   - Dropdown is auto-populated by plex.tv
+   - plex.tv knows about servers even on private networks
+   - Pre-filled URL would be redundant or confusing
+
+3. **Comparison with Jellyfin (future):**
+   - Jellyseerr → Jellyfin requires: hostname + API key
+   - Overseerr → Plex requires: OAuth only (plex.tv handles discovery)
+   - Different auth models = different interface needs
+
+**Conclusion:** Skip `media-server` interface entirely. Re-evaluate when adding Jellyfin support - may need interface for Jellyseerr integration.
 
 ## Implementation Details
-
-### Charm Architecture
-
-```mermaid
-graph TB
-    subgraph "plex-k8s charm"
-        subgraph Provides
-            MS[media-server<br/>for Overseerr]
-        end
-        
-        subgraph Requires
-            MST[media-storage<br/>shared /data]
-            ING[ingress<br/>optional]
-        end
-        
-        subgraph Storage
-            CFG[config PVC<br/>/config<br/>Plex database]
-        end
-        
-        subgraph Config
-            HWT[hardware-transcoding]
-            LOG[log-level]
-        end
-        
-        subgraph Actions
-            CLM[claim-server]
-        end
-    end
-```
 
 ### Reconciler Flow
 
 ```mermaid
 flowchart TD
-    Start([Reconcile Event]) --> P1{Phase 1:<br/>Container<br/>Connected?}
-    P1 -->|No| W1[WaitingStatus:<br/>Waiting for Pebble]
-    P1 -->|Yes| Scale{Scale > 1?}
+    Start([Reconcile Event]) --> Scale{Planned Units > 1?}
+    Scale -->|Yes| Block[BlockedStatus: Scaling not supported]
+    Scale -->|No| P1{Container Connected?}
     
-    Scale -->|Yes, Not Leader| Stop[Stop workload<br/>BlockedStatus]
-    Scale -->|Yes, Leader| Log[Log warning]
-    Scale -->|No| P2
-    Log --> P2
+    P1 -->|No| W1[WaitingStatus: Waiting for Pebble]
+    P1 -->|Yes| P2{Media Storage Ready?}
     
-    P2{Phase 2:<br/>Media Storage<br/>Ready?}
-    P2 -->|No| P2a[Patch StatefulSet<br/>for shared PVC]
-    P2a --> W2[WaitingStatus:<br/>Waiting for storage]
-    P2 -->|Yes| P3{Phase 3:<br/>HW Transcode<br/>Enabled?}
+    P2 -->|No| P2a[Patch StatefulSet for shared PVC]
+    P2a --> W2[WaitingStatus: Waiting for storage]
+    P2 -->|Yes| P3{Hardware Transcoding Enabled?}
     
-    P3 -->|Yes| P3a[Patch StatefulSet<br/>for /dev/dri mount]
+    P3 -->|Yes| P3a[Patch StatefulSet: mount /dev/dri]
     P3 -->|No| P4
-    P3a --> P4
+    P3a --> P4[Configure Pebble Layer]
     
-    P4[Phase 4:<br/>Configure Pebble Layer]
-    P4 --> P5{Phase 5:<br/>Workload<br/>Healthy?}
+    P4 --> P5{Claim Token in Config?}
+    P5 -->|Yes, Unclaimed| P5a[Write PLEX_CLAIM to env]
+    P5 -->|No or Already Claimed| P6
+    P5a --> P6[Start/Update Workload]
     
-    P5 -->|No| W3[WaitingStatus:<br/>Starting Plex]
-    P5 -->|Yes| P6[Phase 6:<br/>Publish media-server<br/>relation data]
+    P6 --> P7{Workload Healthy?}
+    P7 -->|No| W3[WaitingStatus: Starting Plex]
+    P7 -->|Yes| P8{Ingress Related?}
     
-    P6 --> Done([ActiveStatus])
+    P8 -->|Yes| P8a[Submit IstioIngressRouteConfig]
+    P8 -->|No| Done
+    P8a --> Done([ActiveStatus: Ready])
     
-    style P1 fill:#e1f5ff
     style Scale fill:#e1f5ff
+    style P1 fill:#e1f5ff
     style P2 fill:#e1f5ff
     style P3 fill:#e1f5ff
     style P5 fill:#e1f5ff
-    style Stop fill:#ffcdd2
+    style P7 fill:#e1f5ff
+    style P8 fill:#e1f5ff
+    style Block fill:#ffebee
+    style W1 fill:#fff9c4
+    style W2 fill:#fff9c4
+    style W3 fill:#fff9c4
     style Done fill:#e8f5e9
+```
+
+### Architecture
+
+```mermaid
+graph TB
+    subgraph "Plex Charm (plex-k8s)"
+        charm[Charm Code]
+        pebble[Pebble]
+        plex[Plex Media Server]
+    end
+    
+    subgraph "Storage"
+        config[Config PVC<br/>/config<br/>Juju-managed]
+        media[Shared PVC<br/>/data<br/>via relation]
+    end
+    
+    subgraph "External"
+        user[User Browser]
+        plextv[plex.tv]
+        overseerr[Overseerr]
+    end
+    
+    charm -->|configures| pebble
+    pebble -->|manages| plex
+    plex -->|reads| config
+    plex -->|reads| media
+    
+    user -->|stream/browse| plex
+    plex <-->|auth, remote access| plextv
+    overseerr -->|discovers servers| plextv
+    user -->|requests| overseerr
+    
+    style charm fill:#e1f5ff
+    style plex fill:#fff4e1
+    style config fill:#e8f5e9
+    style media fill:#e8f5e9
 ```
 
 ### Pebble Layer
@@ -128,26 +144,22 @@ flowchart TD
 ```python
 def _build_pebble_layer(self) -> ops.pebble.LayerDict:
     """Build Pebble layer for Plex."""
-    
-    # Get PUID/PGID from storage relation
     storage = self.media_storage.get_provider()
-    if not storage:
-        raise RuntimeError("Storage relation required")
     
     env = {
         "PUID": str(storage.puid),
         "PGID": str(storage.pgid),
         "TZ": "Etc/UTC",
-        "VERSION": "docker",  # Auto-update within container
+        "VERSION": "docker",  # Use container's bundled version
     }
     
-    # Add claim token if set via action (temporary)
-    if self._pending_claim_token:
-        env["PLEX_CLAIM"] = self._pending_claim_token
-        self._pending_claim_token = None  # Clear after use
+    # Add claim token if provided and server unclaimed
+    claim_token = self.config.get("claim-token")
+    if claim_token and not self._is_server_claimed():
+        env["PLEX_CLAIM"] = claim_token
     
     return {
-        "summary": "Plex Media Server",
+        "summary": "Plex Media Server layer",
         "services": {
             "plex": {
                 "override": "replace",
@@ -162,7 +174,7 @@ def _build_pebble_layer(self) -> ops.pebble.LayerDict:
                 "level": "ready",
                 "http": {"url": "http://localhost:32400/identity"},
                 "period": "10s",
-                "timeout": "3s",
+                "timeout": "5s",
                 "threshold": 3,
             }
         },
@@ -171,11 +183,12 @@ def _build_pebble_layer(self) -> ops.pebble.LayerDict:
 
 ### Hardware Transcoding
 
-When `hardware-transcoding` config is enabled, patch StatefulSet to mount GPU:
+When `hardware-transcoding` config is enabled, the charm patches the StatefulSet to mount `/dev/dri`:
 
 ```python
-def _patch_statefulset_for_hw_transcode(self) -> None:
+def _patch_for_hardware_transcoding(self) -> None:
     """Patch StatefulSet to mount /dev/dri for Intel QuickSync."""
+    client = lightkube.Client()
     
     patch = {
         "spec": {
@@ -183,13 +196,13 @@ def _patch_statefulset_for_hw_transcode(self) -> None:
                 "spec": {
                     "containers": [{
                         "name": "plex",
+                        "securityContext": {
+                            "privileged": True,  # Required for /dev/dri access
+                        },
                         "volumeMounts": [{
                             "name": "dri",
                             "mountPath": "/dev/dri",
                         }],
-                        "securityContext": {
-                            "privileged": True,  # Required for device access
-                        },
                     }],
                     "volumes": [{
                         "name": "dri",
@@ -203,7 +216,6 @@ def _patch_statefulset_for_hw_transcode(self) -> None:
         }
     }
     
-    client = lightkube.Client()
     client.patch(
         StatefulSet,
         name=self.app.name,
@@ -213,88 +225,60 @@ def _patch_statefulset_for_hw_transcode(self) -> None:
     )
 ```
 
-**Note:** Intel QuickSync (integrated GPU) is the target. Discrete GPUs (NVIDIA) would require different configuration (nvidia-device-plugin).
+**Requirements for hardware transcoding:**
+- Intel CPU with integrated graphics (non-F SKUs)
+- `/dev/dri` available on node
+- Plex Pass subscription
+- `--trust` flag for privileged container
 
-### Claim Server Action
+### Server Claiming
+
+Plex requires "claiming" to link a server to a Plex account. Two methods supported:
+
+**Method 1: Claim Token (Automated)**
+```bash
+# Get token from https://plex.tv/claim (expires in 4 minutes)
+juju config plex claim-token="claim-xxxxxxxxxxxx"
+```
+
+**Method 2: Manual (Web UI)**
+1. Access Plex at `http://<plex-ip>:32400/web`
+2. Sign in with Plex account
+3. Server is automatically claimed
+
+The charm detects if server is already claimed by checking `Preferences.xml`:
 
 ```python
-def _on_claim_server_action(self, event: ops.ActionEvent) -> None:
-    """Handle claim-server action.
-    
-    Sets PLEX_CLAIM env var temporarily and restarts workload.
-    Token is NOT persisted - it's single-use and expires in 4 minutes.
-    """
-    token = event.params.get("token")
-    
-    if not token or not token.startswith("claim-"):
-        event.fail("Invalid token. Get one from https://plex.tv/claim")
-        return
-    
+def _is_server_claimed(self) -> bool:
+    """Check if Plex server is already claimed."""
     container = self.unit.get_container("plex")
-    if not container.can_connect():
-        event.fail("Cannot connect to Plex container")
-        return
-    
-    # Store temporarily for next Pebble layer update
-    self._pending_claim_token = token
-    
-    # Trigger reconcile to apply new layer with claim token
-    self._configure_pebble_layer()
-    
-    # Restart to pick up the claim token
-    container.restart("plex")
-    
-    event.set_results({
-        "message": "Claim token applied. Plex is restarting. "
-                   "Check Plex UI to verify server is claimed."
-    })
+    try:
+        prefs = container.pull("/config/Library/Application Support/Plex Media Server/Preferences.xml")
+        content = prefs.read()
+        # Server is claimed if PlexOnlineToken exists
+        return "PlexOnlineToken" in content
+    except (PathError, FileNotFoundError):
+        return False
 ```
 
-### Media Server Relation
+### Remote Access via Tailscale
 
-```python
-def _publish_media_server_data(self) -> None:
-    """Publish connection info for Overseerr/Jellyseerr."""
-    
-    if not self.media_server_provider.relations:
-        return
-    
-    self.media_server_provider.publish_data(
-        MediaServerProviderData(
-            api_url=f"http://{self.app.name}:32400",
-            server=MediaServer.PLEX,
-            instance_name=self.app.name,
-        )
-    )
-```
+Plex has built-in "Remote Access" that uses UPnP/NAT-PMP to punch through firewalls. For Charmarr deployments using Tailscale:
 
-### Scaling Protection
+**Recommended approach:**
+1. **Disable Plex Remote Access** in Settings → Network
+2. **Use Tailscale URL** as custom server access URL in Plex settings
+3. **Configure Overseerr** to use Tailscale URL when setting up Plex manually (if needed)
 
-Per [ADR-008 Scaling Constraints](../cross-cutting/adr-008-scaling-constraints.md):
+**Plex settings for Tailscale:**
+- Settings → Network → Custom server access URLs: `https://plex.tailnet-name.ts.net:32400`
+- This tells Plex clients where to find the server on your Tailnet
 
-```python
-def _reconcile(self, event: ops.EventBase) -> None:
-    # ... container checks ...
-    
-    if self.app.planned_units() > 1:
-        if not self.unit.is_leader():
-            container = self.unit.get_container("plex")
-            if container.can_connect():
-                try:
-                    container.stop("plex")
-                except Exception:
-                    pass
-            self.unit.status = ops.BlockedStatus(
-                "Scaling not supported - only leader runs workload"
-            )
-            return
-        else:
-            logger.warning(
-                "Scaling > 1 not supported. Non-leader units idle."
-            )
-    
-    # Continue with normal reconciliation...
-```
+**Why this works:**
+- Tailscale provides secure, encrypted access without exposing ports
+- No UPnP/NAT-PMP complexity
+- Works from anywhere on your Tailnet
+- Istio ingress handles routing within the cluster
 
 ## charmcraft.yaml
 
@@ -302,22 +286,23 @@ def _reconcile(self, event: ops.EventBase) -> None:
 name: plex-k8s
 type: charm
 title: Plex Media Server
-summary: Stream your media anywhere with Plex
+summary: Media streaming server for Charmarr
 description: |
-  Plex Media Server organizes your video, music, and photo collections
-  and streams them to all of your devices.
+  Plex Media Server streams your media to devices anywhere.
 
   This charm provides:
   - Automatic media storage integration via relation
   - Optional hardware transcoding (Intel QuickSync)
   - Ingress integration for remote access
-  - Integration with Overseerr for content requests
 
   After deployment:
   1. Access Plex UI via ingress or port-forward
-  2. Sign in with your Plex account (or use claim-server action)
+  2. Sign in with your Plex account (or use claim-token config)
   3. Configure libraries pointing to /data/media
-  4. (Optional) Configure remote access in Settings → Network
+  4. (Optional) Configure Tailscale URL for remote access
+
+  Note: Plex is automatically discovered by Overseerr via plex.tv
+  after OAuth - no manual URL configuration needed.
 
 links:
   documentation: https://github.com/charmarr/plex-k8s
@@ -362,9 +347,8 @@ storage:
       Plex configuration and metadata database.
       Recommend 10GB+ for large libraries (thumbnails, metadata).
 
-provides:
-  media-server:
-    interface: media-server
+# NO provides section - Plex doesn't provide any interfaces
+# Overseerr discovers Plex via plex.tv, not via Juju relation
 
 requires:
   media-storage:
@@ -377,6 +361,19 @@ requires:
 
 config:
   options:
+    claim-token:
+      type: string
+      default: ""
+      description: |
+        Plex claim token for automated server setup.
+        
+        Get token from https://plex.tv/claim
+        Token expires in 4 minutes and is single-use.
+        
+        Leave empty to claim manually via web UI after deployment.
+        
+        Note: Token is only used if server is not already claimed.
+
     hardware-transcoding:
       type: boolean
       default: false
@@ -387,6 +384,7 @@ config:
         - Intel CPU with integrated graphics (most non-F SKUs)
         - Node must have /dev/dri available
         - Plex Pass subscription
+        - Charm deployed with --trust flag
         
         When enabled, the charm mounts /dev/dri into the container
         and runs with elevated privileges.
@@ -395,147 +393,77 @@ config:
       type: string
       default: "info"
       description: |
-        Plex logging verbosity.
-        Note: Plex doesn't have granular log levels like arr apps.
-        This primarily affects charm logging.
+        Charm logging verbosity.
+        Note: Plex doesn't expose granular log levels via environment.
 
 actions:
-  claim-server:
+  refresh-libraries:
     description: |
-      Claim this Plex server to your Plex account.
-      
-      Get a claim token from https://plex.tv/claim
-      Token expires in 4 minutes and is single-use.
-      
-      Alternative: Access Plex web UI and sign in directly.
-    params:
-      token:
-        type: string
-        description: "Claim token from plex.tv/claim (format: claim-xxxxx)"
-    required: [token]
+      Trigger a full library scan in Plex.
+      Useful after bulk media additions.
 ```
 
 ## User Experience
 
-### Initial Setup
+### Deployment
 
 ```bash
-# Deploy Plex
+# Basic deployment
 juju deploy plex-k8s plex --trust
-
-# Relate to storage (required)
 juju relate plex charmarr-storage
 
-# Relate to ingress (optional but recommended)
-juju relate plex istio-ingress
-
-# Wait for deployment
-juju status --watch 2s
-```
-
-### Claiming Server
-
-**Option A: Via Web UI (recommended)**
-```bash
-# Port forward to access UI
-kubectl port-forward -n charmarr svc/plex 32400:32400
-
-# Open http://localhost:32400/web
-# Sign in with Plex account
-# Server is automatically claimed
-```
-
-**Option B: Via Action (for automation)**
-```bash
-# Get claim token (expires in 4 minutes!)
-# Visit https://plex.tv/claim
-
-# Apply token
-juju run plex/0 claim-server token=claim-xxxxxxxxxxxxxxxxxxxx
-```
-
-### Hardware Transcoding
-
-```bash
-# Enable hardware transcoding
+# With hardware transcoding
 juju config plex hardware-transcoding=true
 
-# Verify in Plex UI:
-# Settings → Transcoder → "Use hardware acceleration when available"
+# With claim token (optional)
+juju config plex claim-token="claim-xxxxxxxxxxxx"
+
+# With ingress
+juju relate plex istio-ingress
 ```
-
-### Remote Access
-
-After deployment, configure in Plex UI:
-1. Settings → Network
-2. Set "Custom server access URLs" to your external URL
-   - Example: `https://plex.yourdomain.com:443`
-3. Optionally disable "Remote Access" if using custom URLs only
 
 ### Library Setup
 
-Libraries point to paths under `/data/media`:
-- Movies: `/data/media/movies`
-- TV Shows: `/data/media/tv`
-- Music: `/data/media/music`
+After deployment:
+1. Access Plex UI (via ingress URL or port-forward)
+2. Sign in with Plex account (claims server if unclaimed)
+3. Add libraries:
+   - Movies: `/data/media/movies`
+   - TV Shows: `/data/media/tv`
+   - Music: `/data/media/music`
 
-These paths are provided by the `media-storage` relation (charmarr-storage charm).
+### Overseerr Integration
 
-## Comparison: Plex vs Jellyfin
-
-| Aspect | Plex | Jellyfin (v1.2) |
-|--------|------|-----------------|
-| Charm name | `plex-k8s` | `jellyfin-k8s` |
-| Port | 32400 | 8096 |
-| Health endpoint | `/identity` | `/health` |
-| Authentication | Plex account (OAuth) | Local accounts |
-| Claim token | Yes (via plex.tv) | No |
-| Hardware transcoding | QuickSync (Plex Pass required) | QuickSync (free) |
-| Remote access | Custom server URLs | Base URL config |
-| Request manager | Overseerr | Jellyseerr |
+No Juju relation needed! After deploying Overseerr:
+1. Open Overseerr setup wizard
+2. Sign in with Plex account (OAuth)
+3. Click refresh next to Server dropdown
+4. Select your Plex server from the list (auto-populated by plex.tv)
+5. Continue with library sync
 
 ## Consequences
 
 ### Good
 
-* Simple deployment - relate to storage and it works
-* Hardware transcoding support for QuickSync
-* Claim action enables automation while avoiding config pollution
-* Scaling protection prevents SQLite corruption
-* Integration with Overseerr via media-server relation
+* **Simple charm** - No complex API integrations, just storage and optional ingress
+* **No unnecessary interface** - Skipping `media-server` avoids complexity with zero benefit
+* **Hardware transcoding support** - Intel QuickSync for smooth playback
+* **Flexible claiming** - Automated or manual, user's choice
+* **Works with Tailscale** - Custom server access URL for secure remote access
 
 ### Bad
 
-* Remote access requires manual Plex UI configuration
-* Hardware transcoding requires privileged container
-* Claim token UX is awkward (4-minute expiry)
-* No Plex Pass validation (user must have subscription for HW transcode)
+* **Manual library setup** - User must configure libraries in Plex UI (can't automate)
+* **Privileged container for transcoding** - Security tradeoff for hardware access
+* **Claim token expires quickly** - 4-minute window for automated claiming
 
 ### Neutral
 
-* User must have Plex account (can't use Plex without one anyway)
-* Library setup is manual (but that's expected - Plex doesn't auto-detect)
+* **No programmatic Overseerr integration** - But this matches how Overseerr actually works
+* **Plex Pass required for transcoding** - Hardware limitation, not charm limitation
 
-## Future Enhancements (v2+)
+## Related MADRs
 
-### ClusterPlex Integration
-
-When user scales plex > 1, could automatically:
-- Leader: Run PMS + ClusterPlex Orchestrator
-- Non-leaders: Run ClusterPlex Workers
-
-This enables distributed transcoding across multiple nodes.
-
-**Requirements:**
-- Shared transcode directory (RWX storage)
-- Different container images per role
-- Orchestrator sidecar or separate container
-
-**Deferred:** Complex, needs more research. v1 focuses on single-instance stability.
-
-## Related ADRs
-
-- [interfaces/adr-007-media-server](../interfaces/adr-007-media-server.md) - media-server interface
-- [cross-cutting/adr-008-scaling-constraints](../cross-cutting/adr-008-scaling-constraints.md) - Scaling protection
-- [storage/adr-001-shared-pvc-architecture](../storage/adr-001-shared-pvc-architecture.md) - Shared media storage
-- [interfaces/adr-005-media-storage](../interfaces/adr-005-media-storage.md) - media-storage interface
+- [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Shared PVC for media files
+- [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - media-storage interface
+- [apps/adr-008](./adr-008-scaling-constraints.md) - Single-instance scaling constraints
