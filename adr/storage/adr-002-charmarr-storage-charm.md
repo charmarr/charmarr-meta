@@ -30,7 +30,7 @@ The storage charm exposes the following configuration options:
 - `storage-class`: Which Kubernetes StorageClass to use (e.g., "topolvm-provisioner", "local-path", "nfs-csi")
 - `nfs-server`: For charmarr managed K8s native NFS driver, the NFS server IP address or hostname
 - `nfs-path`: For charmarr managed K8s native NFS driver, the export path on the NFS server
-- `size`: Storage capacity to provision, semantic meaning differs by backend type (see [ADR-003](adr-003-storage-backends.md))
+- `size`: Storage capacity to provision (see [ADR-001](adr-001-shared-pvc-architecture.md) for access mode and provisioning details)
 
 **Backend Selection Guidance:**
 

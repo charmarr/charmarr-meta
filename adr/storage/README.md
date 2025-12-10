@@ -23,7 +23,7 @@ Charmarr's storage layer provides:
 
 ### Configuration Storage
 - **[ADR-004: Config Storage](adr-004-config-storage.md)** - Separate storage for charm configuration and databases
-- **[ADR-005: Config Backup](adr-005-confifg-backup.md)** - Automated backup and restore procedures
+- **[ADR-005: Config Backup](adr-005-config-backup.md)** - Automated backup and restore procedures
 
 ## Storage Architecture
 

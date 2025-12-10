@@ -433,3 +433,83 @@ class QBittorrentCharm(CharmBase):
 
         self.unit.status = ActiveStatus(f"Routing via {gateway.external_ip}")
 ```
+
+## Provider-Side Patching (Gateway Containers)
+
+The `VPNGatewayProvider` class patches the gateway charm's own StatefulSet to add pod-gateway containers. This is separate from the consumer-side patching documented above.
+
+**Gateway containers added:**
+1. **gateway_init.sh** (init container) - Creates VXLAN tunnel, sets up iptables forwarding rules, blocks non-VPN traffic
+2. **gateway_sidecar.sh** (sidecar container) - Runs DHCP and DNS server for client pods
+
+**Implementation pattern** (same strategic merge patch approach as consumer-side):
+
+```python
+class VPNGatewayProvider:
+    def reconcile(self):
+        """Patch gateway StatefulSet with pod-gateway containers."""
+
+        if self._routing_method != "pod-gateway":
+            return  # Future: support other routing methods
+
+        # Build gateway init container
+        gateway_init = {
+            "name": "gateway-init",
+            "image": "ghcr.io/angelnu/pod-gateway:v1.13.0",
+            "command": ["/bin/sh", "/init/gateway_init.sh"],
+            "securityContext": {"capabilities": {"add": ["NET_ADMIN"]}},
+            "env": self._build_gateway_env_vars(),
+        }
+
+        # Build gateway sidecar container (DHCP + DNS servers)
+        gateway_sidecar = {
+            "name": "gateway-sidecar",
+            "image": "ghcr.io/angelnu/pod-gateway:v1.13.0",
+            "command": ["/bin/sh", "/init/gateway_sidecar.sh"],
+            "ports": [
+                {"name": "dhcp", "containerPort": 67, "protocol": "UDP"},
+                {"name": "dns", "containerPort": 53, "protocol": "UDP"},
+            ],
+            "env": self._build_gateway_env_vars(),
+        }
+
+        # Patch using lightkube (same pattern as consumer patching)
+        client = Client()
+        sts = client.get(StatefulSet, self.app.name, namespace=self.model.name)
+
+        # Add init container and sidecar
+        if sts.spec.template.spec.initContainers is None:
+            sts.spec.template.spec.initContainers = []
+        sts.spec.template.spec.initContainers.append(gateway_init)
+
+        if sts.spec.template.spec.containers is None:
+            sts.spec.template.spec.containers = []
+        sts.spec.template.spec.containers.append(gateway_sidecar)
+
+        # Apply strategic merge patch
+        client.patch(
+            StatefulSet,
+            self.app.name,
+            sts,
+            namespace=self.model.name,
+            patch_type=PatchType.STRATEGIC
+        )
+
+    def _build_gateway_env_vars(self) -> list[dict]:
+        """Build environment variables for pod-gateway gateway containers."""
+        return [
+            {"name": "VXLAN_ID", "value": str(self._vxlan_id)},
+            {"name": "VXLAN_IP_NETWORK", "value": self._vxlan_network},
+            {"name": "GATEWAY_IP", "value": self._gateway_ip},
+            {"name": "CLUSTER_CIDRS", "value": self._cluster_cidrs},
+            {"name": "DNS_LOCAL_CIDRS", "value": self._cluster_cidrs},
+        ]
+```
+
+**Key differences from consumer patching:**
+- Gateway adds **both** init container and sidecar
+- Gateway containers run DHCP/DNS services (bind to ports)
+- Gateway requires NET_ADMIN capability for iptables manipulation
+- Gateway environment variables configure VXLAN endpoint, not client
+
+See [networking/adr-002-vpn-gateway.md](../networking/adr-002-vpn-gateway.md) for architectural overview of why both gateway and consumer patching is necessary.

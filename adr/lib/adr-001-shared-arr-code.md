@@ -39,6 +39,60 @@ Without shared infrastructure, we'd duplicate significant code across 4+ charms 
 
 ## Decision Outcome
 
+### Shared Enums
+
+All enum definitions are consolidated here to ensure consistency across interfaces:
+
+```python
+from enum import Enum
+
+# ========================================
+# Shared Enums (used across all interfaces)
+# ========================================
+
+class MediaIndexer(str, Enum):
+    """Media indexer applications."""
+    PROWLARR = "prowlarr"
+    JACKETT = "jackett"  # Future
+    NZBHYDRA2 = "nzbhydra2"  # Future
+
+class MediaManager(str, Enum):
+    """Media manager applications."""
+    RADARR = "radarr"
+    SONARR = "sonarr"
+    LIDARR = "lidarr"
+    READARR = "readarr"
+    WHISPARR = "whisparr"
+
+class DownloadClient(str, Enum):
+    """Download client applications."""
+    QBITTORRENT = "qbittorrent"
+    SABNZBD = "sabnzbd"
+    DELUGE = "deluge"
+    TRANSMISSION = "transmission"
+
+class DownloadClientType(str, Enum):
+    """Download protocol categories."""
+    TORRENT = "torrent"
+    USENET = "usenet"
+
+class RequestManager(str, Enum):
+    """Request management applications."""
+    OVERSEERR = "overseerr"
+    JELLYSEERR = "jellyseerr"
+```
+
+**Rationale**: Consolidating all enum definitions in charmarr-lib ensures:
+- Single source of truth for application identifiers
+- No duplicate definitions across interface ADRs
+- Easy to extend with new applications
+- Type safety across all interface data models
+
+**Interface ADRs reference these enums** rather than redefining them. See:
+- [interfaces/adr-003-media-indexer.md](../interfaces/adr-003-media-indexer.md)
+- [interfaces/adr-004-download-client.md](../interfaces/adr-004-download-client.md)
+- [interfaces/adr-006-media-manager.md](../interfaces/adr-006-media-manager.md)
+
 ### API Client: Option 2 - Inheritance with shared base
 
 ```python
@@ -237,9 +291,10 @@ class DownloadClientConfigBuilder:
         category: str,
         model: Model,
     ) -> dict:
-        # Retrieve secrets
-        username = model.get_secret(id=provider.username_secret_id).get_content()["username"]
-        password = model.get_secret(id=provider.password_secret_id).get_content()["password"]
+        # Retrieve secrets (single secret contains both username and password)
+        credentials = model.get_secret(id=provider.credentials_secret_id).get_content()
+        username = credentials["username"]
+        password = credentials["password"]
 
         # Parse URL
         parsed = urlparse(str(provider.api_url))

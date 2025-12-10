@@ -322,8 +322,7 @@ def _build_pebble_layer(self) -> ops.pebble.LayerDict:
 def _publish_provider_data(self) -> None:
     provider_data = DownloadClientProviderData(
         api_url="http://qbittorrent:8080",
-        username_secret_id=self._credentials_secret_id,
-        password_secret_id=self._credentials_secret_id,
+        credentials_secret_id=self._credentials_secret_id,  # Single secret with username + password
         client=DownloadClient.QBITTORRENT,
         client_type=DownloadClientType.TORRENT,
         instance_name=self.app.name,

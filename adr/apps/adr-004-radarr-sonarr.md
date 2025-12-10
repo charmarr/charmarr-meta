@@ -4,7 +4,7 @@
 
 Charmarr requires charm implementations for media manager applications (Radarr, Sonarr, and future Lidarr). These charms share ~95% identical logic, differing only in ports, media types, and Recyclarr templates. We need to define the implementation details including reconciler pattern, Pebble configuration, storage handling, relation management, config options, actions, and OCI image selection while ensuring compliance with all previously established MADRs.
 
-**Note:** For shared arr infrastructure (ArrApiClient, reconcilers, config builders), see [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md).
+**Note:** For shared arr infrastructure (ArrApiClient, reconcilers, config builders), see [lib/adr-001-shared-arr-code](../lib/adr-001-shared-arr-code.md).
 
 ## Considered Options
 
@@ -166,7 +166,7 @@ flowchart TD
 
 ### Phase 6: Workload Configuration via Shared Reconcilers
 
-This phase uses the shared arr infrastructure from charmarr-lib. See [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) for details on `ArrApiClient`, reconciler functions, and config builders.
+This phase uses the shared arr infrastructure from charmarr-lib. See [lib/adr-001-shared-arr-code](../lib/adr-001-shared-arr-code.md) for details on `ArrApiClient`, reconciler functions, and config builders.
 
 ```python
 def _reconcile_workload_config(self) -> None:
@@ -190,7 +190,7 @@ def _reconcile_workload_config(self) -> None:
     )
 ```
 
-**Important:** Download client reconciliation is aggressive - any download client not present in Juju relations will be deleted, including manually-configured ones. See [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) for rationale.
+**Important:** Download client reconciliation is aggressive - any download client not present in Juju relations will be deleted, including manually-configured ones. See [lib/adr-001-shared-arr-code](../lib/adr-001-shared-arr-code.md) for rationale.
 
 ### Download Client Category Configuration
 
@@ -217,6 +217,10 @@ def _build_qbittorrent_config(
             {"name": "username", "value": self._get_username(provider)},
             {"name": "password", "value": self._get_password(provider)},
             # Category = this charm's app name
+            # Note: Field name is media-type specific:
+            # - Radarr: "movieCategory"
+            # - Sonarr: "tvCategory"
+            # - Lidarr: "musicCategory" (likely)
             {"name": "movieCategory", "value": self.app.name},  # Radarr
             # For Sonarr: {"name": "tvCategory", "value": self.app.name},
             {"name": "recentMoviePriority", "value": 0},
@@ -266,8 +270,7 @@ def _build_sabnzbd_config(
 - `sonarr` → category `sonarr`
 
 The download client charms (qBittorrent, SABnzbd) are responsible for creating matching categories with appropriate save paths. See:
-- [apps/adr-007-qbittorrent](./adr-007-qbittorrent.md)
-- [apps/adr-008-sabnzbd](./adr-008-sabnzbd.md)
+- [apps/adr-007-qbit-sabnzbd](./adr-007-qbit-sabnzbd.md) - qBittorrent and SABnzbd charm implementation
 
 ### Pebble Layer
 
@@ -305,6 +308,8 @@ def _build_pebble_layer(self) -> ops.pebble.LayerDict:
 ### Storage Patching
 
 Per [Storage ADR 003](../storage/adr-003-pvc-patching-in-arr-charms.md), use lightkube to patch StatefulSet for shared media storage.
+
+**CRITICAL IMPLEMENTATION NOTE**: When patching the StatefulSet, you MUST use the exact container name from `charmcraft.yaml` (e.g., `"radarr"`), NOT `self.app.name` (which is the Juju application name like `"radarr-4k"`). Using the wrong name will cause the patch to fail silently. See [Storage ADR 003](../storage/adr-003-pvc-patching-in-arr-charms.md) line 34 for details on why this is critical.
 
 ### API Key Management
 
@@ -463,7 +468,7 @@ All other implementation (reconciler phases, relations, config options, actions,
 * Reconciler pattern ensures idempotent, self-healing behavior
 * Pebble checks provide robust readiness detection
 * Auto-configuration minimizes user setup (root folder, external URL, download clients)
-* Shared arr infrastructure eliminates code duplication (see [lib/adr-001](../lib/adr-001-arr-shared-infrastructure.md))
+* Shared arr infrastructure eliminates code duplication (see [lib/adr-001](../lib/adr-001-shared-arr-code.md))
 * LinuxServer images provide production stability with large community support
 * Category = app name means no relation data needed, multiple instances just work
 * Compliant with all existing MADRs
@@ -481,7 +486,7 @@ All other implementation (reconciler phases, relations, config options, actions,
 
 ## Related MADRs
 
-- [lib/adr-001-arr-shared-infrastructure](../lib/adr-001-arr-shared-infrastructure.md) - ArrApiClient, shared reconcilers, config builders
+- [lib/adr-001-shared-arr-code](../lib/adr-001-shared-arr-code.md) - ArrApiClient, shared reconcilers, config builders
 - [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Shared PVC architecture
 - [storage/adr-003](../storage/adr-003-pvc-patching-in-arr-charms.md) - StatefulSet patching via lightkube
 - [storage/adr-004](../storage/adr-004-config-storage.md) - Config storage (native SQLite)
@@ -491,5 +496,5 @@ All other implementation (reconciler phases, relations, config options, actions,
 - [interfaces/adr-006](../interfaces/adr-006-media-manager.md) - media-manager interface
 - [apps/adr-002](./adr-002-cross-app-auth.md) - Authentication and credential management
 - [apps/adr-003](./adr-003-recyclarr-integration.md) - Recyclarr integration
-- [apps/adr-007-qbittorrent](./adr-007-qbittorrent.md) - qBittorrent charm with category creation
-- [apps/adr-008-sabnzbd](./adr-008-sabnzbd.md) - SABnzbd charm with category creation
+- [apps/adr-007-qbit-sabnzbd](./adr-007-qbit-sabnzbd.md) - qBittorrent and SABnzbd charm implementation with category creation
+- [lib/adr-003](../lib/adr-003-reconciliation-philosophy.md) - Reconciliation philosophy (aggressive for download clients)

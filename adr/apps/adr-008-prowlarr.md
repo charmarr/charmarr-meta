@@ -362,4 +362,4 @@ actions:
 - [interfaces/adr-002-secret-management](../interfaces/adr-002-secret-management.md) - Juju secrets for API keys
 - [lib/adr-001-shared-arr-code](../lib/adr-001-shared-arr-code.md) - Shared arr infrastructure
 - [apps/adr-004-radarr-sonarr](./adr-004-radarr-sonarr.md) - Media manager charms (consumers)
-- [infra/adr-XXX-scaling-constraints](../infra/adr-XXX-scaling-constraints.md) - Scaling constraints
+- [apps/adr-012-app-scaling-v1](./adr-012-app-scaling-v1.md) - Scaling constraints (leader-only pattern)

@@ -466,4 +466,4 @@ No Juju relation needed! After deploying Overseerr:
 
 - [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Shared PVC for media files
 - [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - media-storage interface
-- [apps/adr-008](./adr-008-scaling-constraints.md) - Single-instance scaling constraints
+- [apps/adr-012](./adr-012-app-scaling-v1.md) - Single-instance scaling constraints

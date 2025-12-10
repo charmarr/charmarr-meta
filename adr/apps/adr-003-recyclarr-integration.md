@@ -33,10 +33,26 @@ Chosen option: **Option A - Embed Recyclarr in arr charms**, because it provides
 - Optional feature - users can disable via config for manual control
 - Profiles stay internal to each arr instance (no interface pollution)
 
-**When to run:**
-- ✅ On startup (install/config-changed) - Automatic initial setup
-- ✅ Via manual action - User re-syncs when Trash Guides update
-- ❌ NOT on schedule - No background cron, user triggers when needed
+**When Recyclarr Runs:**
+
+1. **Every reconciliation** if `trash-profiles` config is set (idempotent operation)
+   - This includes: install, upgrade, config-changed, relation changes, secret changes
+   - Recyclarr is fast (~2-5 sec) and idempotent, so safe to run frequently
+   - Ensures profiles stay in sync even if manually deleted via web UI
+   - Profile data is published to relations after each sync
+
+2. **Via manual action** (`juju run radarr sync-trash-profiles`)
+   - Use when Trash Guides update their recommendations
+   - Forces immediate sync without waiting for next reconcile event
+
+3. **NOT on schedule** - No background cron job
+   - Reduces unnecessary API calls to Radarr
+   - User controls when updates happen via action or by triggering reconcile
+
+**Rationale for "every reconcile"**: Juju spawns fresh Python process per event,
+so state tracking ("has run once") is impossible without storing state in Juju
+peer relation. Running on every reconcile is simpler than managing persistent state,
+and the performance cost is negligible (~2-5 seconds per reconcile).
 
 ### Consequences
 

@@ -256,18 +256,20 @@ api_key = secret.get_content()["api-key"]
 
 **download-client interface** (qBit/SAB → Media Managers):
 ```python
-# qBittorrent provider shares:
-relation_data["credentials-secret-id"] = secret.id
+# qBittorrent provider shares (single secret with both fields):
+relation_data["credentials_secret_id"] = secret.id
 
 # Radarr requirer retrieves:
 secret = self.model.get_secret(id=secret_id)
-username = secret.get_content()["username"]
-password = secret.get_content()["password"]
+credentials = secret.get_content()
+username = credentials["username"]
+password = credentials["password"]
 
 # SABnzbd provider shares:
-relation_data["api-key-secret-id"] = secret.id
+relation_data["api_key_secret_id"] = secret.id
 
 # Radarr requirer retrieves:
+secret = self.model.get_secret(id=secret_id)
 api_key = secret.get_content()["api-key"]
 ```
 
@@ -341,3 +343,4 @@ Every 5 minutes (update-status interval):
 ## Related Decisions
 
 * [Interfaces ADR-002](../interfaces/adr-002-secret-management.md): Secret Management (establishes Juju Secrets as the storage mechanism)
+* [lib ADR-003](../lib/adr-003-reconciliation-philosophy.md): Reconciliation Philosophy (establishes self-healing pattern for credentials)

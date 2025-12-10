@@ -65,20 +65,10 @@ Request management tools like Overseerr need to connect to media managers (Radar
 ### Enums
 
 ```python
-from enum import Enum
+from charmarr_lib.models import MediaManager, RequestManager
 
-class MediaManager(Enum):
-    """Supported media manager applications"""
-    radarr = "radarr"
-    sonarr = "sonarr"
-    lidarr = "lidarr"
-    readarr = "readarr"
-    whisparr = "whisparr"
-
-class RequestManager(Enum):
-    """Supported request management applications"""
-    overseerr = "overseerr"
-    jellyseerr = "jellyseerr"
+# Note: MediaManager and RequestManager enums are defined in charmarr-lib
+# See lib/adr-001-shared-arr-code.md for the consolidated enum definitions
 ```
 
 ### Provider Data Model (Updated with Quality Profiles)
@@ -107,7 +97,10 @@ class MediaManagerProviderData(BaseModel):
     # Configuration (NEW - populated from Radarr API after Recyclarr sync)
     quality_profiles: list[QualityProfile] = Field(description="Available quality profiles")
     root_folders: list[str] = Field(description="Available root folder paths")
-    is_4k: bool = Field(description="Whether this instance handles 4K content (derived from profiles)")
+    is_4k: bool = Field(
+        default=False,
+        description="Whether this instance handles 4K content (set via charm config, not inferred from profile names)"
+    )
 ```
 
 ### Requirer Data Model (Unchanged)
@@ -152,13 +145,10 @@ class RadarrCharm(CharmBase):
             headers={"X-Api-Key": self.api_key}
         )
         root_folders = [f["path"] for f in folders_response.json()]
-        
-        # Determine if 4K instance (check profile names for 4K indicators)
-        is_4k = any(
-            "2160p" in p.name.lower() or "uhd" in p.name.lower() or "4k" in p.name.lower()
-            for p in profiles
-        )
-        
+
+        # Get is_4k from charm config (explicit configuration, not inferred)
+        is_4k = self.config.get("is-4k", False)
+
         # Publish to relation
         provider_data = MediaManagerProviderData(
             api_url=f"http://{self.app.name}:7878",
@@ -241,9 +231,14 @@ class OverseerrCharm(CharmBase):
 ## User Experience Flow
 
 ```bash
-# After Radarr instances are deployed with profiles (see Apps ADR 003):
+# Deploy Radarr instances with explicit 4K flag (see Apps ADR 003):
+juju deploy radarr radarr-1080p --config trash-profiles="hd-bluray-web"
+juju deploy radarr radarr-1080p-remux --config trash-profiles="remux-web-1080p"
+juju deploy radarr radarr-4k --config trash-profiles="uhd-bluray-web" --config is-4k=true
+
+# Relate to Overseerr:
 juju relate overseerr radarr-1080p
-juju relate overseerr radarr-1080p-remux  
+juju relate overseerr radarr-1080p-remux
 juju relate overseerr radarr-4k
 
 # Result in Overseerr (automatic):
@@ -296,5 +291,6 @@ Body: {
 ## Related Decisions
 
 - [Apps ADR 003](../apps/adr-003-recyclarr-integration.md) - How quality profiles are created in Radarr using Trash Guides
+- [lib ADR-003](../lib/adr-003-reconciliation-philosophy.md) - Reconciliation philosophy (respectful reconciliation for quality profiles)
 - **Media-indexer interface** - Similar passive provider pattern for Prowlarr ↔ arr apps
 - **Download-client interface** - Similar passive provider pattern for download clients ↔ arr apps

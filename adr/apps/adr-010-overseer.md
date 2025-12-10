@@ -391,4 +391,4 @@ All file operations happen in Radarr/Sonarr/Plex. Overseerr is purely an API orc
 - [interfaces/adr-006](../interfaces/adr-006-media-manager.md) - media-manager interface with quality profiles
 - [apps/adr-004](./adr-004-radarr-sonarr.md) - Radarr/Sonarr charms that provide media-manager
 - [apps/adr-009](./adr-009-plex.md) - Plex charm (no interface to Overseerr)
-- [apps/adr-008](./adr-008-scaling-constraints.md) - Single-instance scaling constraints
+- [apps/adr-012](./adr-012-app-scaling-v1.md) - Single-instance scaling constraints

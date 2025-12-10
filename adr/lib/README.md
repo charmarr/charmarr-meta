@@ -19,6 +19,7 @@ Charmarr's library layer provides:
 ### Core Libraries
 - **[ADR-001: Shared Arr Code](adr-001-shared-arr-code.md)** - API clients, reconcilers, and config builders for arr applications (Radarr, Sonarr, Prowlarr)
 - **[ADR-002: VPN K8s Library](adr-002-vpn-k8s-lib.md)** - VPN gateway integration library with pod-gateway VXLAN patching
+- **[ADR-003: Reconciliation Philosophy](adr-003-reconciliation-philosophy.md)** - When to use aggressive vs respectful vs self-healing reconciliation patterns
 
 ## Library Structure
 

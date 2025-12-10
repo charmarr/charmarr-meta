@@ -627,5 +627,5 @@ Note: Reducing this interval increases load on the Juju controller. For most dep
 - [ADR-003: Download Client VPN Integration](../networking/adr-003-download-client-egress.md) - Consumer self-patching approach
 - [ADR-004: VPN Kill Switch](../networking/adr-004-vpn-kill-switch.md) - Two-layer kill switch strategy
 - [ADR-005: Istio Mesh Integration](../networking/adr-005-istio-mesh-vpn-integration.md) - Why gateway must be outside mesh
-- [ADR-007: VPN Gateway Interface](../networking/adr-007-vpn-gateway-interface.md) - Interface data models
+- [ADR-007: VPN Gateway Interface](../interfaces/adr-007-vpn-gateway.md) - Interface data models
 - [ADR-002: vpn-k8s-lib](../lib/adr-002-vpn-k8s-lib.md) - Library implementation details

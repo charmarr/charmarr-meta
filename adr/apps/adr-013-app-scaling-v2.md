@@ -89,8 +89,7 @@ class DownloadClientProviderData(BaseModel):
 class DownloadClientInstance(BaseModel):
     api_url: HttpUrl  # Unit FQDN: http://qbittorrent-0.qbittorrent-endpoints...
     api_key_secret_id: Optional[str] = None
-    username_secret_id: Optional[str] = None
-    password_secret_id: Optional[str] = None
+    credentials_secret_id: Optional[str] = None  # For qBittorrent (contains username + password)
     client: DownloadClient
     client_type: DownloadClientType
     instance_name: str  # "qbittorrent-0", "qbittorrent-1"
@@ -198,8 +197,7 @@ def _publish_all_instances(self) -> None:
         if "fqdn" in unit_data:
             instances.append(DownloadClientInstance(
                 api_url=f"http://{unit_data['fqdn']}:{unit_data['port']}",
-                username_secret_id=unit_data.get("credentials_secret_id"),
-                password_secret_id=unit_data.get("credentials_secret_id"),
+                credentials_secret_id=unit_data.get("credentials_secret_id"),
                 client=DownloadClient.QBITTORRENT,
                 client_type=DownloadClientType.TORRENT,
                 instance_name=f"{self.app.name}-{unit.name.split('/')[1]}",

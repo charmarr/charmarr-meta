@@ -31,7 +31,7 @@ Charmarr's networking architecture provides:
 - **[ADR-006: Multi-Model Topology](adr-006-model-topology.md)** - charmarr-core + charmarr-downloads models with cross-model relations
 
 ### Interfaces
-- **[ADR-007: VPN Gateway Interface](adr-007-vpn-gateway-interface.md)** - vpn-k8s-lib providing interface classes, data models, and patching helpers for both provider and consumer
+- **[ADR-007: VPN Gateway Interface](../interfaces/adr-007-vpn-gateway.md)** - vpn-k8s-lib providing interface classes, data models, and patching helpers for both provider and consumer
 
 ## Component Summary
 

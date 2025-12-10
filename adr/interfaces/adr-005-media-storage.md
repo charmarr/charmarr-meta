@@ -273,6 +273,52 @@ juju deploy charmarr-storage --trust \
     --config pgid=1050
 ```
 
+## Migration from Existing Setups
+
+### Handling Existing File Ownership
+
+When migrating from Docker Compose or other setups with different PUID/PGID, existing files may have ownership that doesn't match Charmarr's defaults.
+
+**Check existing ownership:**
+```bash
+# After deploying but before relating storage
+kubectl exec -it radarr-0 -- ls -ln /data/media
+# Look for UID:GID in output
+```
+
+**Option A: Match existing ownership** (recommended for large libraries)
+```bash
+# If files are owned by 1001:1001, configure storage charm to match
+juju deploy charmarr-storage --trust \
+    --config puid=1001 \
+    --config pgid=1001
+```
+
+**Option B: Recursive chown** (risky for large libraries)
+```bash
+# After deploying with default PUID/PGID, fix ownership
+# WARNING: This can take hours for large media libraries
+kubectl exec -it charmarr-storage-0 -- chown -R 1000:1000 /data
+```
+
+**Option C: NFS with squash** (if using NFS backend)
+```bash
+# Configure NFS export with user squashing
+# /etc/exports on NFS server:
+/path/to/media *(rw,sync,no_subtree_check,all_squash,anonuid=1000,anongid=1000)
+
+# All file operations appear as 1000:1000 regardless of client
+```
+
+**Validation after configuration:**
+```bash
+# Verify new files have correct ownership
+kubectl exec -it radarr-0 -- touch /data/test-file
+kubectl exec -it radarr-0 -- ls -ln /data/test-file
+# Should show: -rw-r--r-- 1 1000 1000 ...
+kubectl exec -it radarr-0 -- rm /data/test-file
+```
+
 ## Consequences
 
 ### Good
@@ -283,12 +329,14 @@ juju deploy charmarr-storage --trust \
 * **Hardlinks work** - Same UID/GID ensures hardlinks are readable/writable by all apps
 * **Passive provider** - Simpler implementation, matches Charmarr patterns
 * **Minimal interface** - Only essential data exchanged
+* **Migration friendly** - PUID/PGID can be configured to match existing files
 
 ### Bad
 
 * **Coupling** - Apps depend on storage relation for PUID/PGID (but they already depend on it for PVC)
 * **Default assumption** - Assumes LinuxServer.io container pattern (but this is our standard)
 * **Single PUID/PGID** - Cannot have different ownership for different apps (but this would break hardlinks anyway)
+* **Migration complexity** - Users migrating from Docker Compose may need to adjust ownership
 
 ## Related MADRs
 

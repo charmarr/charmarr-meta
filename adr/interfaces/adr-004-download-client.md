@@ -56,15 +56,15 @@ Key requirements:
 graph LR
     P[Provider: qBittorrent/SABnzbd]
     R[Requirer: Radarr/Sonarr/Lidarr]
-    
-    P -->|api_url<br/>api_key_secret_id OR<br/>username_secret_id + password_secret_id<br/>client: qbittorrent/sabnzbd<br/>client_type: torrent/usenet<br/>instance_name<br/>base_path| R
+
+    P -->|api_url<br/>api_key_secret_id OR<br/>credentials_secret_id<br/>client: qbittorrent/sabnzbd<br/>client_type: torrent/usenet<br/>instance_name<br/>base_path| R
     R -->|manager: radarr/sonarr<br/>instance_name| P
-    
+
     style P fill:#e1f5ff
     style R fill:#fff4e1
 ```
 
-**Note:** Provider publishes either `api_key_secret_id` (SABnzbd) OR `username_secret_id` + `password_secret_id` (qBittorrent), not both.
+**Note:** Provider publishes either `api_key_secret_id` (SABnzbd) OR `credentials_secret_id` (qBittorrent, Deluge), not both. The credentials secret contains both username and password fields.
 
 ### Data Models (Pydantic 2.0)
 
@@ -92,13 +92,9 @@ class DownloadClientProviderData(BaseModel):
         default=None,
         description="Juju secret ID for API key (SABnzbd)"
     )
-    username_secret_id: Optional[str] = Field(
+    credentials_secret_id: Optional[str] = Field(
         default=None,
-        description="Juju secret ID for username (qBittorrent, Deluge)"
-    )
-    password_secret_id: Optional[str] = Field(
-        default=None,
-        description="Juju secret ID for password (qBittorrent, Deluge)"
+        description="Juju secret ID containing username and password (qBittorrent, Deluge). The secret contains both fields in a single secret."
     )
     client: DownloadClient = Field(description="The download client application")
     client_type: DownloadClientType = Field(description="Protocol type")
@@ -177,8 +173,7 @@ class QBittorrentCharm(CharmBase):
     def _reconcile(self, event):
         data = DownloadClientProviderData(
             api_url="http://qbittorrent:8080",
-            username_secret_id=self.username_secret_id,
-            password_secret_id=self.password_secret_id,
+            credentials_secret_id=self.credentials_secret_id,  # Single secret with username + password
             client=DownloadClient.QBITTORRENT,
             client_type=DownloadClientType.TORRENT,
             instance_name=self.app.name,  # "qbittorrent-vpn"
@@ -218,8 +213,8 @@ class RadarrCharm(CharmBase):
 - Requirer data minimal (download client doesn't need info about requesters)
 
 **Bad:**
-- Provider data has optional fields (either api_key OR username+password)
-- Validation can't enforce "must have api_key XOR (username AND password)" at Pydantic level
+- Provider data has optional fields (either api_key_secret_id OR credentials_secret_id)
+- Validation can't enforce "must have api_key_secret_id XOR credentials_secret_id" at Pydantic level
 - Need to validate auth field combinations at charm level
 - Adding new download clients requires updating DownloadClient enum
 
@@ -231,5 +226,5 @@ class RadarrCharm(CharmBase):
 - Media manager uses `provider.instance_name` as client identifier in Radarr/Sonarr API
 - Download client charm sets `instance_name = self.app.name`
 - SABnzbd publishes only `api_key_secret_id`
-- qBittorrent/Deluge publish only `username_secret_id` + `password_secret_id`
+- qBittorrent/Deluge publish only `credentials_secret_id` (single secret containing both username and password)
 - Media manager charm validates auth fields before use

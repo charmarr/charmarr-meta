@@ -24,7 +24,7 @@ The decision significantly impacts infrastructure complexity, backup strategy, r
 
 ## Decision Outcome
 
-Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. Charmarr v1 wouldn't support HA, but PostgresQL support will be added to charms whose upstream supports it for v2.
+Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because it provides the simplest architecture with minimal operational overhead while meeting all functional requirements. Charmarr v1 wouldn't support HA, but PostgreSQL support will be added to charms whose upstream supports it for v2.
 
 ### Consequences
 
@@ -33,7 +33,7 @@ Chosen option: **"Option 1: Native databases on Juju-managed storage"**, because
 * Good, because zero additional infrastructure to deploy (no PostgreSQL cluster, no s3-integrator for PostgreSQL)
 * Good, because simpler charm code with no database schema management, migrations, or connection pooling
 * Good, because fewer services to monitor and maintain (2 backup services vs 4 with PostgreSQL option)
-* Good, because unified backup approach via Velero for all services (see MADR-002)
+* Good, because unified backup approach via Velero for all services (backup strategy to be documented)
 * Bad, because restore operations take longer (2-5 min per service vs 30 sec with PostgreSQL)
 * Bad, because SQLite databases cannot be shared across instances (but applications don't support this anyway)
 * Bad, because no automatic recovery on restore (requires manual juju commands, though could be automated in Configuratarr later)

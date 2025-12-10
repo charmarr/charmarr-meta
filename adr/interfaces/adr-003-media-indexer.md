@@ -50,8 +50,21 @@ Key requirements:
 
 ## Decision Outcome
 
-**Data Models: Separate typed enums (Option 2)**
+**Data Models: Separate typed enums (Option 2)** - Enums defined in [lib/adr-001](../lib/adr-001-shared-arr-code.md)
 **Events: Single custom event + observe only changed/broken (Options 2 + 4)**
+
+### Provider Pattern: Active vs Passive
+
+**IMPORTANT**: The Prowlarr provider is **ACTIVE** (unusual pattern):
+- Prowlarr reads requirer data and actively syncs indexers TO media managers via API calls
+- This differs from passive providers (storage, download-client) that just publish data and let requirers configure themselves
+- Rationale: Prowlarr has centralized knowledge of all indexers and should push them out, rather than each arr app pulling them
+
+**Contrast with passive providers:**
+- **Storage charm**: Just publishes PVC name, requirers mount it themselves
+- **Download-client charm**: Just publishes credentials, requirers configure themselves via their own API
+
+**Pattern choice**: Active provider chosen because Prowlarr needs to make API calls to each media manager to add indexers. The provider is best positioned to do this work centrally, rather than having each media manager query Prowlarr's API.
 
 ### Data Exchange Overview
 
@@ -70,22 +83,12 @@ graph LR
 ### Data Models (Pydantic 2.0)
 
 ```python
-from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, HttpUrl, Field
+from charmarr_lib.models import MediaIndexer, MediaManager
 
-class MediaIndexer(str, Enum):
-    """Media indexer applications."""
-    PROWLARR = "prowlarr"
-    # Future: JACKETT, NZBHYDRA2, etc.
-
-class MediaManager(str, Enum):
-    """Media manager applications."""
-    RADARR = "radarr"
-    SONARR = "sonarr"
-    LIDARR = "lidarr"
-    READARR = "readarr"
-    WHISPARR = "whisparr"
+# Note: MediaIndexer and MediaManager enums are defined in charmarr-lib
+# See lib/adr-001 for the consolidated enum definitions
 
 class MediaIndexerProviderData(BaseModel):
     """Data published by indexer managers (Prowlarr)."""

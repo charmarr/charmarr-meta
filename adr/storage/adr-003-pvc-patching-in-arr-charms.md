@@ -31,8 +31,19 @@ Chosen option: "Have consuming charms use lightkube to patch their own StatefulS
 - ✅ Data persists across pod restarts and charm lifecycle events
 
 **Critical Gotchas:**
-1. **Container Name:** Use the exact container name from `charmcraft.yaml` (e.g., `bookinfo-radarr`), NOT `self.app.name`. The latter is the Juju app name and won't match the actual container name in the StatefulSet.
+1. **Container Name (CRITICAL):** Use the exact container name from `charmcraft.yaml` (e.g., `radarr` for the Radarr charm), NOT `self.app.name`. The latter is the Juju application name (like `radarr-4k`) and won't match the actual container name in the StatefulSet. This is the most common mistake and will cause patches to fail silently - the patch will appear to succeed but won't actually modify the container.
+
+   **Example:**
+   ```python
+   # WRONG - uses Juju app name
+   container_name = self.app.name  # Could be "radarr-4k", won't match charmcraft.yaml
+
+   # CORRECT - uses charmcraft.yaml container name
+   container_name = "radarr"  # Must match: containers: radarr:
+   ```
+
 2. **Trust Flag Required:** Charms MUST be deployed with `juju deploy --trust` to access the Kubernetes API for patching operations.
+
 3. **Idempotency is Essential:** Always check if volume is already mounted before patching to avoid unnecessary pod restarts.
 
 Full validation details: See [adr-004-validation-plan.md](https://github.com/charmarr/.ai/blob/main/done/adr-004-validation-plan.md) in project repository.
