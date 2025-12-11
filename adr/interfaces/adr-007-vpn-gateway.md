@@ -212,6 +212,72 @@ kubectl exec -it qbittorrent-0 -- curl ifconfig.me
 # Should show VPN exit IP
 ```
 
+## vpn-k8s-lib Implementation Notes (Validated 2025-12-11)
+
+### Provider-Side Patching (VPNGatewayProvider)
+
+The library's `VPNGatewayProvider.reconcile()` method must:
+
+1. **Patch gateway StatefulSet** with pod-gateway gateway containers:
+   - Init container with **privileged: true** and **iptables fix**
+   - Sidecar container (only needs NET_ADMIN capability)
+
+2. **Discover cluster CIDRs** automatically:
+   ```python
+   # Query cluster-info dump for pod and service CIDRs
+   pod_cidr = self._get_pod_cidr()
+   service_cidr = self._get_service_cidr()
+   ```
+
+3. **Publish provider data** including:
+   - `cluster_cidrs`: **Comma-separated string** in relation data (e.g., `"10.1.0.0/16,10.152.183.0/24"`)
+   - `vpn_connected`: Query gluetun's /v1/publicip/ip endpoint
+   - `external_ip`: For user verification
+
+### Requirer-Side Patching (VPNGatewayRequirer)
+
+The library's `VPNGatewayRequirer.reconcile()` method must:
+
+1. **Check gateway readiness** before patching:
+   ```python
+   if not provider_data.vpn_connected:
+       # Set WaitingStatus, don't patch yet
+       return
+   ```
+
+2. **Create ConfigMap** with cluster CIDRs and DNS IP:
+   ```python
+   dns_ip = self._get_dns_service_ip()  # Query kube-dns/coredns service
+
+   # CRITICAL: Convert comma-separated (relation data) to space-separated (ConfigMap)
+   # Client scripts use shell word splitting on spaces
+   cluster_cidrs_spaces = provider_data.cluster_cidrs.replace(',', ' ')
+
+   configmap_data = {
+       "settings.sh": f"""K8S_DNS_IPS="{dns_ip}"
+NOT_ROUTED_TO_GATEWAY_CIDRS="{cluster_cidrs_spaces}"
+"""
+   }
+   ```
+
+3. **Patch consumer StatefulSet** with:
+   - Init container (NET_ADMIN capability)
+   - Sidecar container (NET_ADMIN capability)
+   - ConfigMap volume mount
+
+4. **Create NetworkPolicy** kill switch
+
+5. **Monitor relation changes** and unpatch when relation breaks
+
+### Validation Results
+
+**Architecture validated on MicroK8s with Calico CNI:**
+- ✅ Cross-namespace VXLAN routing (gateway and client in different namespaces)
+- ✅ Kill switch blocks traffic when VPN down
+- ✅ Auto-recovery after gateway restart (~10 seconds)
+- ✅ Cluster traffic preserved (DNS, pod-to-pod, services)
+- ✅ Resource overhead: ~3MB RAM per client sidecar
+
 ## Related ADRs
 
 - **ADR-002: VPN Gateway Solution** - Defines gluetun + pod-gateway architecture

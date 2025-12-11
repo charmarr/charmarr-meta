@@ -125,3 +125,29 @@ The key insight: VXLAN encapsulation makes external traffic look like cluster-in
 | Gateway pod restarts | Client sidecar detects, resets VXLAN | N/A | ✅ Self-heals |
 | VPN disconnects | Allows VXLAN traffic through | Blocks at firewall | ✅ Blocked |
 | VPN provider blocks IP | Allows VXLAN traffic through | Blocks (no route via tun0) | ✅ Blocked |
+
+## Validation Results (2025-12-11)
+
+**Tested on MicroK8s with Calico CNI and ProtonVPN WireGuard:**
+
+### Normal Operation
+- ✅ External traffic routes through VPN (verified public IP: 91.132.139.6)
+- ✅ Cluster DNS works (kubernetes.default.svc.cluster.local resolves)
+- ✅ Pod-to-pod traffic works (reached nginx at 10.1.239.102)
+
+### Kill Switch Activated (Gateway Pod Deleted)
+- ✅ External traffic **BLOCKED** (curl to ifconfig.me timed out after 10 seconds)
+- ✅ Cluster traffic **PRESERVED** (nginx pod still reachable)
+- ✅ DNS resolution **PRESERVED** (CoreDNS still accessible)
+
+### Recovery After Gateway Restart
+- ✅ Gateway pod recreated and ready in ~60 seconds
+- ✅ Client auto-reconnected in ~10 seconds after gateway ready
+- ✅ VXLAN interface re-established (new DHCP IP: 172.16.0.205/24)
+- ✅ External traffic restored (public IP: 91.132.139.6)
+
+**Key findings:**
+- **Two-layer defense validated**: NetworkPolicy catches routing failures, gluetun catches VPN failures
+- **Zero data leakage**: External traffic blocked during gateway downtime
+- **Automatic recovery**: No manual intervention needed after gateway restart
+- **Cluster connectivity preserved**: Kill switch only blocks external traffic

@@ -76,3 +76,67 @@ pod-gateway provides the VXLAN overlay infrastructure:
 **Image versions:**
 * gluetun: `ghcr.io/qdm12/gluetun:latest`
 * pod-gateway: `ghcr.io/angelnu/pod-gateway:v1.13.0`
+
+## Implementation Requirements (Validated 2025-12-11)
+
+### Gateway-Side Requirements
+
+**1. iptables Fix (CRITICAL)**
+
+The gateway-init container MUST add an iptables rule to accept VXLAN packets from the pod CIDR:
+
+```yaml
+initContainers:
+  - name: gateway-init
+    image: ghcr.io/angelnu/pod-gateway:v1.13.0
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        /bin/gateway_init.sh
+        iptables -I INPUT -i eth0 -s ${POD_CIDR} -j ACCEPT
+```
+
+**Why**: Client pods send VXLAN-encapsulated packets to the gateway pod. These packets arrive on eth0 with source IPs from the pod network. Without this rule, the gateway's firewall blocks them. This is required regardless of CNI (Calico, Flannel, Cilium).
+
+**2. Privileged Mode (CRITICAL)**
+
+The gateway-init container MUST have `privileged: true`:
+
+```yaml
+securityContext:
+  privileged: true
+```
+
+**Why**: The init script runs `sysctl -w net.ipv4.ip_forward=1` to enable IP forwarding. /proc/sys is read-only without privileged mode. The gateway-sidecar does NOT need privileged mode.
+
+**3. Environment Variables (CRITICAL - Formatting Confusion)**
+
+**CONFUSING BUT CORRECT**: Different components expect different separators:
+
+- **Gluetun** `FIREWALL_OUTBOUND_SUBNETS`: **comma-separated** (no spaces)
+  ```yaml
+  env:
+    - name: FIREWALL_OUTBOUND_SUBNETS
+      value: "10.1.0.0/16,10.152.183.0/24"  # commas
+  ```
+  Gluetun will crash on startup if spaces are used.
+
+- **Gateway init/sidecar** `NOT_ROUTED_TO_GATEWAY_CIDRS`: **comma-separated** (no spaces)
+  ```yaml
+  env:
+    - name: NOT_ROUTED_TO_GATEWAY_CIDRS
+      value: "10.1.0.0/16,10.152.183.0/24"  # commas
+  ```
+
+- **Gateway-sidecar must have** `VXLAN_GATEWAY_FIRST_DYNAMIC_IP` (same value as init)
+
+### Validation Results
+
+**Tested on MicroK8s with Calico CNI and ProtonVPN WireGuard:**
+- ✅ VXLAN routing works cross-namespace
+- ✅ Multiple clients can share single gateway
+- ✅ Client auto-reconnects after gateway restart (~10 seconds)
+- ✅ DHCP IP allocation: 172.16.0.20+ (first-come-first-served)
+- ✅ Resource overhead: ~3MB RAM per client sidecar
+- ✅ Kill switch blocks traffic when VPN down
+- ✅ Cluster traffic bypasses VPN correctly
