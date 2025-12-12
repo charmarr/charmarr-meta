@@ -83,36 +83,33 @@ graph LR
 ### Data Models (Pydantic 2.0)
 
 ```python
-from typing import Optional
-from pydantic import BaseModel, HttpUrl, Field
-from charmarr_lib.models import MediaIndexer, MediaManager
+from pydantic import BaseModel
+from charmarr_lib.core.enums import MediaIndexer, MediaManager
 
-# Note: MediaIndexer and MediaManager enums are defined in charmarr-lib
+# Note: MediaIndexer and MediaManager enums are defined in charmarr_lib.core.enums
 # See lib/adr-001 for the consolidated enum definitions
 
 class MediaIndexerProviderData(BaseModel):
-    """Data published by indexer managers (Prowlarr)."""
-    api_url: HttpUrl = Field(description="Base URL of the indexer manager API")
-    api_key_secret_id: str = Field(description="Juju secret ID")
-    indexer: MediaIndexer = Field(description="The indexer application")
-    base_path: Optional[str] = Field(
-        default=None,
-        description="Base path if running under subpath (e.g., /prowlarr)"
-    )
+    """Data published by indexer managers."""
+    api_url: str
+    api_key_secret_id: str
+    indexer: MediaIndexer
+    base_path: str | None = None
 
 class MediaIndexerRequirerData(BaseModel):
-    """Data published by media managers (Radarr/Sonarr/etc)."""
-    api_url: HttpUrl = Field(description="Base URL of the media manager API")
-    api_key_secret_id: str = Field(description="Juju secret ID")
-    manager: MediaManager = Field(description="The media manager application")
-    instance_name: str = Field(
-        description="Unique instance name (e.g., radarr-4k, sonarr-anime)"
-    )
-    base_path: Optional[str] = Field(
-        default=None,
-        description="Base path if running under subpath (e.g., /radarr)"
-    )
+    """Data published by media managers."""
+    api_url: str
+    api_key_secret_id: str
+    manager: MediaManager
+    instance_name: str
+    base_path: str | None = None
 ```
+
+**Implementation notes:**
+- Using `str` for URLs instead of `HttpUrl` - simpler serialization, charms validate their own URLs
+- Using `str | None` (Python 3.12+) instead of `Optional[str]` for modern type hints
+- Field descriptions omitted - type hints and docstrings provide sufficient documentation
+- Serialized to relation databag as: `relation.data[app]["config"] = data.model_dump_json()`
 
 ### Provider/Requirer Classes
 
@@ -133,7 +130,10 @@ class MediaIndexerProvider(Object):
     
     def publish_data(self, data: MediaIndexerProviderData) -> None:
         """Publish provider data to all relations."""
-        ...
+        if not self._charm.unit.is_leader():
+            return
+        for relation in self._charm.model.relations.get(self._relation_name, []):
+            relation.data[self._charm.app]["config"] = data.model_dump_json()
     
     def get_requirers(self) -> List[MediaIndexerRequirerData]:
         """Get all connected media managers with valid data."""
@@ -159,7 +159,11 @@ class MediaIndexerRequirer(Object):
     
     def publish_data(self, data: MediaIndexerRequirerData) -> None:
         """Publish requirer data to relation."""
-        ...
+        if not self._charm.unit.is_leader():
+            return
+        relation = self._charm.model.get_relation(self._relation_name)
+        if relation:
+            relation.data[self._charm.app]["config"] = data.model_dump_json()
     
     def get_provider_data(self) -> Optional[MediaIndexerProviderData]:
         """Get Prowlarr's data if available."""
@@ -221,9 +225,26 @@ class RadarrCharm(CharmBase):
 
 ## Implementation Notes
 
-- Models and classes live in `charmarr-lib`, shared by all charms
+**Location and Structure:**
+- Models and classes live in `charmarr_lib.core.interfaces.media_indexer`
+- Exported from `charmarr_lib.core` for easy importing
+
+**Event Handling:**
 - Library observes relation-changed (covers joins + updates) and relation-broken (cleanup)
 - Emits single `changed` custom event for all state transitions
-- Prowlarr charm maps `manager` field to `/api/v1/applications` payload format
 - relation-changed always follows relation-joined, so observing both is redundant
 - Reconciler pattern: charm checks current state, not individual transitions
+
+**Data Serialization:**
+- Entire model serialized to single "config" key in databag
+- Implementation: `relation.data[app]["config"] = data.model_dump_json()`
+- Atomic updates - either complete valid data or none
+- Easier schema versioning and completeness checking
+- Pattern follows canonical istio-ingress-route example
+
+**Testing:**
+- Uses `ops-scenario>=7.0` for state-transition tests
+- Tests focus on our logic, not Pydantic/framework behavior
+- 13 focused tests covering: data publishing, retrieval, error handling, `is_ready()` logic
+- 91% coverage on interface code
+- Function-based tests for maintainability

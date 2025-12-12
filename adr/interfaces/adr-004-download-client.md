@@ -129,7 +129,10 @@ class DownloadClientProvider(Object):
     
     def publish_data(self, data: DownloadClientProviderData) -> None:
         """Publish provider data to all relations."""
-        ...
+        if not self._charm.unit.is_leader():
+            return
+        for relation in self._charm.model.relations.get(self._relation_name, []):
+            relation.data[self._charm.app]["config"] = data.model_dump_json()
 
 class DownloadClientRequirerEvents(ObjectEvents):
     """Custom events for DownloadClientRequirer."""
@@ -148,7 +151,10 @@ class DownloadClientRequirer(Object):
     
     def publish_data(self, data: DownloadClientRequirerData) -> None:
         """Publish requirer data to all relations."""
-        ...
+        if not self._charm.unit.is_leader():
+            return
+        for relation in self._charm.model.relations.get(self._relation_name, []):
+            relation.data[self._charm.app]["config"] = data.model_dump_json()
     
     def get_providers(self) -> List[DownloadClientProviderData]:
         """Get all connected download clients with valid data."""

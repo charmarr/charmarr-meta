@@ -61,7 +61,7 @@ Terraform operations happen in Given steps, not pytest fixtures or tox commands.
 
 ```python
 from pytest_bdd import given
-from charmarr.testing import TFManager
+from charmarr_lib.testing import TFManager
 
 @given("the radarr charm is deployed")
 def deploy_radarr(tmp_path, juju):
@@ -73,11 +73,11 @@ def deploy_radarr(tmp_path, juju):
     tf.apply(env={"TF_VAR_model_name": juju.model})
 ```
 
-### Shared Test Code: Option 3 — charmarr-testing package
+### Shared Test Code: Option 3 — charmarr-lib-testing package
 
 ```python
-from charmarr.testing import TFManager, wait_for_active_idle
-from charmarr.testing.steps import common_deployment_steps
+from charmarr_lib.testing import TFManager, wait_for_active_idle
+from charmarr_lib.testing.steps import common_deployment_steps
 ```
 
 ## Integration Test Structure
@@ -112,7 +112,7 @@ pytest_plugins = [
     "tests.integration.steps.common_steps",
     "tests.integration.steps.deployment_steps",
     "tests.integration.steps.relation_steps",
-    "charmarr.testing.steps",  # shared steps from library
+    "charmarr_lib.testing.steps",  # shared steps from library
 ]
 ```
 
@@ -155,7 +155,7 @@ class TFManager:
     def destroy(self) -> None: ...
 ```
 
-Lives in `charmarr.testing`. Supports both `terraform` and `tofu` binaries.
+Lives in `charmarr_lib.testing`. Supports both `terraform` and `tofu` binaries.
 
 ## Unit vs Integration Tests
 

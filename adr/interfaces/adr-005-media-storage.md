@@ -109,16 +109,19 @@ class MediaStorageProvider(Object):
     
     def publish_data(self, data: MediaStorageProviderData) -> None:
         """Publish provider data to all relations."""
+        if not self._charm.unit.is_leader():
+            return
         for relation in self.model.relations.get(self.relation_name, []):
-            relation.data[self.model.app].update(data.model_dump_json())
+            relation.data[self.model.app]["config"] = data.model_dump_json()
     
     def get_connected_apps(self) -> list[str]:
         """Get list of connected application names (for logging/metrics)."""
         apps = []
         for relation in self.model.relations.get(self.relation_name, []):
             requirer_data = relation.data.get(relation.app, {})
-            if "instance_name" in requirer_data:
-                apps.append(requirer_data["instance_name"])
+            if "config" in requirer_data:
+                data = MediaStorageRequirerData.model_validate_json(requirer_data["config"])
+                apps.append(data.instance_name)
         return apps
 ```
 
@@ -145,15 +148,21 @@ class MediaStorageRequirer(Object):
     
     def publish_data(self, data: MediaStorageRequirerData) -> None:
         """Publish requirer data."""
-        for relation in self.model.relations.get(self.relation_name, []):
-            relation.data[self.model.unit].update(data.model_dump_json())
+        if not self._charm.unit.is_leader():
+            return
+        relation = self.model.get_relation(self.relation_name)
+        if relation:
+            relation.data[self.model.app]["config"] = data.model_dump_json()
     
     def get_provider(self) -> MediaStorageProviderData | None:
         """Get storage provider data if available."""
-        for relation in self.model.relations.get(self.relation_name, []):
-            provider_data = relation.data.get(relation.app, {})
-            if provider_data:
-                return MediaStorageProviderData.model_validate_json(provider_data)
+        relation = self.model.get_relation(self.relation_name)
+        if not relation:
+            return None
+
+        provider_data = relation.data.get(relation.app, {})
+        if provider_data and "config" in provider_data:
+            return MediaStorageProviderData.model_validate_json(provider_data["config"])
         return None
     
     def is_ready(self) -> bool:

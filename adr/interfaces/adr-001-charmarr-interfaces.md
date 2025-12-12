@@ -120,6 +120,20 @@ The capability-based approach enables several extension scenarios without interf
 
 **Mixed ecosystems**: Nothing prevents using Prowlarr for indexers, qBittorrent for torrents, SABnzbd for usenet, and a custom-built media manager, as long as each implements the appropriate interface.
 
+### Implementation Patterns
+
+All Charmarr interfaces follow consistent implementation patterns for relation databag management:
+
+**Databag Usage**: All interfaces use application databags (`relation.data[app]`) rather than unit databags. This represents application-level capabilities and configuration, not unit-specific state. This aligns with the single-instance architecture of most media automation apps.
+
+**Leader Write Restrictions**: Only leader units can write to application databags in Juju. All `publish_data()` methods in interface implementations MUST check `self._charm.unit.is_leader()` before writing. Non-leader units should silently return. This prevents permission errors and aligns with the scaling constraints where app-level configuration is leader-managed.
+
+**Data Serialization**: All interfaces serialize complete Pydantic models to a single `"config"` key in the databag using `relation.data[app]["config"] = data.model_dump_json()`. This provides atomic updates and easier schema versioning.
+
+**Provider vs Requirer Patterns**:
+- **Active providers** (media-indexer): Read requirer data and actively configure remote applications via API
+- **Passive providers** (all others): Only publish their own data, don't react to relation changes
+
 ### Consequences
 
 * Good, because interfaces are reusable beyond the Charmarr ecosystem - any Juju charm can implement them

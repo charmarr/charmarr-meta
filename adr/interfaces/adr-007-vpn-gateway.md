@@ -25,14 +25,15 @@ Chosen option: **"Passive provider + active requirer with configurable routing m
 
 ### Library Structure
 
-The `vpn-gateway` interface is implemented in **vpn-k8s-lib**, a separate Python package. This separation allows:
+The `vpn-gateway` interface is implemented in **charmarr-vpn**, a package within the charmarr-lib monorepo. This design:
 
-* gluetun-k8s charm (or future alternatives) to implement the provider side
-* Any charm needing VPN egress to use the requirer side
-* Independent versioning from Charmarr-specific interfaces
-* Reuse beyond the Charmarr ecosystem
+* Provides consistent packaging with other Charmarr libraries (charmarr-core, charmarr-testing)
+* Allows gluetun-k8s charm (or future alternatives) to implement the provider side
+* Enables any charm needing VPN egress to use the requirer side
+* Maintains clean separation of VPN functionality from core interfaces
+* Still allows reuse beyond the Charmarr ecosystem
 
-**vpn-k8s-lib provides:**
+**charmarr-vpn provides:**
 
 * `VPNGatewayProvider` - for VPN gateway charms
   - Patches gateway charm's StatefulSet with pod-gateway gateway containers
@@ -72,7 +73,7 @@ def _reconcile(self, event):
 ```
 
 To add a new routing method:
-1. Update vpn-k8s-lib with new patching logic
+1. Update charmarr-vpn with new patching logic
 2. Consumer charms automatically support it after lib update
 3. Optionally update provider charms to use new method
 
@@ -86,8 +87,8 @@ To add a new routing method:
 * Good, because single `changed` event enables clean reconciler pattern
 * Good, because `external_ip` enables user verification of VPN functionality
 * Good, because topology visible via `juju status --relations`
-* Good, because vpn-k8s-lib is reusable beyond Charmarr
-* Bad, because download clients need lightkube for StatefulSet patching (via vpn-k8s-lib)
+* Good, because charmarr-vpn is reusable beyond Charmarr
+* Bad, because download clients need lightkube for StatefulSet patching (via charmarr-vpn)
 * Bad, because download clients need RBAC permissions to patch their own StatefulSets
 
 ## Interface Data Models
@@ -212,7 +213,7 @@ kubectl exec -it qbittorrent-0 -- curl ifconfig.me
 # Should show VPN exit IP
 ```
 
-## vpn-k8s-lib Implementation Notes (Validated 2025-12-11)
+## charmarr-vpn Implementation Notes (Validated 2025-12-11)
 
 ### Provider-Side Patching (VPNGatewayProvider)
 
