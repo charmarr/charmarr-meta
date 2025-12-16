@@ -17,15 +17,6 @@ Central documentation and architecture repository for the Charmarr project.
 
 This meta repository serves as the source of truth for Charmarr's architecture, design decisions, and project documentation. It contains no executable code - only documentation, ADRs, and assets used across the Charmarr ecosystem.
 
-## What is Charmarr?
-
-Charmarr is a Kubernetes-native media automation platform built with Juju charms, providing:
-- Automated media management (Radarr, Sonarr, Prowlarr)
-- VPN-routed download clients (qBittorrent, SABnzbd)
-- Media streaming (Plex)
-- Content request management (Overseerr)
-- Enterprise-grade networking (VPN egress, service mesh, Tailscale)
-
 ## Repository Contents
 
 ```
