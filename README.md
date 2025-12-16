@@ -5,9 +5,6 @@
 <p align="center">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-CC%20BY--SA%204.0-lightgrey" alt="License"></a>
   <img src="https://img.shields.io/github/last-commit/charmarr/charmarr-meta" alt="Last Commit">
-  <img src="https://img.shields.io/badge/Juju-charms-E95420?logo=ubuntu" alt="Juju">
-  <img src="https://img.shields.io/badge/Kubernetes-substrate-326CE5?logo=kubernetes&logoColor=white" alt="Kubernetes">
-</p>
 
 <h1 align="center">Charmarr Meta Repository</h1>
 
