@@ -139,3 +139,47 @@ metadata:
 ### Cross-Namespace Communication
 
 Download clients (charmarr-downloads) relate to gluetun (gluetun namespace) via Juju cross-model relations. The VXLAN tunnel crosses namespace boundaries at the IP level - this works because VXLAN is encapsulated UDP traffic to a specific pod IP, which Kubernetes networking allows regardless of namespace.
+
+### Critical: ztunnel Link-Local Address Routing
+
+**Problem discovered (2024-12-24):** When pods are enrolled in Istio ambient mesh AND have VPN routing configured, kubelet probes fail with timeout errors, causing CrashLoopBackOff.
+
+**Root cause:** Istio ambient mode uses a hardcoded link-local address `169.254.7.127` for ztunnel ↔ pod communication. When ztunnel proxies traffic to a pod:
+
+1. ztunnel connects to pod from source IP `169.254.7.127`
+2. Pod receives request and sends TCP SYN-ACK response
+3. Response is routed via pod's routing table
+4. **With VPN routing:** Default route is `vxlan0 → gluetun`, so response goes to VPN gateway
+5. Response never reaches ztunnel → TCP handshake fails → probe timeout
+
+```
+# Observed in pod with VPN routing + Istio ambient:
+$ ss -tn | grep 38812
+SYN_RECV  [::ffff:10.1.239.103]:38812 [::ffff:169.254.7.127]:49496
+# Connections stuck in SYN_RECV - SYN-ACK going to wrong destination
+```
+
+**Solution:** The `NOT_ROUTED_TO_GATEWAY_CIDRS` must include `169.254.7.127/32` (ztunnel's specific link-local address) so responses to ztunnel route via eth0, not vxlan0.
+
+```
+# Required routing table entries for Istio ambient + VPN:
+default via 172.16.0.1 dev vxlan0              # External → VPN
+10.1.0.0/16 via 169.254.1.1 dev eth0          # Pod network → eth0
+10.152.183.0/24 via 169.254.1.1 dev eth0      # Service network → eth0
+169.254.7.127 via 169.254.1.1 dev eth0        # ztunnel link-local → eth0 ← CRITICAL
+```
+
+**Why 169.254.7.127?** Istio ambient mode uses SNAT to rewrite kubelet probe traffic with this link-local address, allowing it to bypass ztunnel authorization. This is documented in:
+
+- [Istio: Ztunnel traffic redirection](https://istio.io/latest/docs/ambient/architecture/traffic-redirection/) - Architecture overview of how ztunnel intercepts traffic
+- [Istio: Troubleshoot connectivity issues with ztunnel](https://istio.io/latest/docs/ambient/usage/troubleshoot-ztunnel/) - Debugging ztunnel issues
+- [Istio: Ambient and Kubernetes NetworkPolicy](https://istio.io/latest/docs/ambient/usage/networkpolicy/) - Interaction between NetworkPolicy and ambient mode
+- [Istio CNI iptables source](https://github.com/istio/istio/blob/master/cni/pkg/iptables/iptables.go) - Source code where 169.254.7.127 is defined
+
+The address `169.254.7.127` is a hardcoded constant in Istio's CNI, stable across deployments.
+
+**Implementation:** charmarr-lib automatically includes `169.254.7.127/32` in:
+- `NOT_ROUTED_TO_GATEWAY_CIDRS` (pod-gateway client routing)
+- Kill switch NetworkPolicy egress rules
+
+This is the specific address Istio uses and is safe because link-local addresses are non-routable by IETF standard (RFC 3927).

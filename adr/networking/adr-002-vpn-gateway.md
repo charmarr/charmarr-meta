@@ -140,3 +140,26 @@ securityContext:
 - ✅ Resource overhead: ~3MB RAM per client sidecar
 - ✅ Kill switch blocks traffic when VPN down
 - ✅ Cluster traffic bypasses VPN correctly
+
+### Juju/Pebble Health Probe Gotcha (CRITICAL)
+
+**Problem**: Juju K8s charms use Pebble which adds automatic HTTP health probes. Kubelet sends these probes FROM the node IP (e.g., 192.168.0.x), not from the pod/service network. VPN firewalls that block non-VPN traffic will block these probes, causing Kubernetes to repeatedly restart the pod.
+
+**Symptom**: Pod cycles between `waiting` → `error` → `CrashLoopBackOff` even though VPN is connected.
+
+**Root cause**:
+- `FIREWALL_OUTBOUND_SUBNETS` only affects OUTBOUND traffic
+- Health probes are INBOUND traffic from node to pod
+- Node network CIDR (e.g., 192.168.0.0/24) is not in cluster CIDRs
+
+**Solution**: Allow INPUT traffic from node network CIDR. Implementation varies by VPN solution:
+
+- **gluetun**: Use `/iptables/post-rules.txt` to add INPUT rules (gluetun's native mechanism). See [gluetun firewall docs](https://github.com/qdm12/gluetun-wiki/blob/main/setup/options/firewall.md).
+- **Other VPN charms**: Use the optional `add_input_rules` parameter in `reconcile_gateway()` from vpn-k8s-lib.
+
+**Required CIDRs for `cluster-cidrs` config**:
+- Pod CIDR (e.g., `10.1.0.0/16`) - for VXLAN traffic from client pods
+- Service CIDR (e.g., `10.152.183.0/24`) - for cluster service access
+- Node network CIDR (e.g., `192.168.0.0/24`) - for Juju/Pebble health probes
+
+**Note**: The VXLAN validation was done with raw Kubernetes (no Juju/Pebble), so this issue was not discovered during initial validation.
