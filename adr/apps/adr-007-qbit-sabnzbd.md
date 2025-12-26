@@ -273,47 +273,14 @@ def _ensure_category_sab(self, name: str, media_type: MediaManager) -> None:
     └── music/
 ```
 
-### PUID/PGID from Storage Relation
+### Process Ownership and Pebble Configuration
 
-Both charms retrieve PUID/PGID from the `media-storage` relation to ensure consistent file ownership across all Charmarr applications.
+Both charms use the Pebble/LinuxServer.io pattern documented in [ADR-015](adr-015-pebble-linuxserver-pattern.md):
+- Bypass s6-overlay by running application binaries directly
+- Use Pebble's `user-id`/`group-id` for process ownership (from storage relation)
+- Use Kubernetes `fsGroup` for volume permissions (from storage relation)
 
-See [Interfaces ADR-005](../interfaces/adr-005-media-storage.md) for details on why centralized ownership management is important.
-
-```python
-def _build_pebble_layer(self) -> ops.pebble.LayerDict:
-    """Build Pebble layer with PUID/PGID from storage relation."""
-    
-    # Get PUID/PGID from storage relation (single source of truth)
-    storage = self.media_storage.get_provider()
-    if not storage:
-        raise RuntimeError("Storage relation required for PUID/PGID")
-    
-    return {
-        "services": {
-            self._service_name: {
-                "override": "replace",
-                "command": "/init",
-                "startup": "enabled",
-                "environment": {
-                    "PUID": str(storage.puid),
-                    "PGID": str(storage.pgid),
-                    "TZ": "Etc/UTC",
-                    # Client-specific vars below
-                },
-            }
-        },
-        "checks": {
-            f"{self._service_name}-ready": {
-                "override": "replace",
-                "level": "ready",
-                "http": {"url": self._health_check_url},
-                "period": "10s",
-                "timeout": "3s",
-                "threshold": 3,
-            }
-        },
-    }
-```
+See [ADR-015](adr-015-pebble-linuxserver-pattern.md) for implementation details and rationale.
 
 ### Provider Data Publication
 

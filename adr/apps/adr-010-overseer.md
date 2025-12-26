@@ -192,34 +192,13 @@ Sonarr follows identical pattern with `/api/v1/settings/sonarr` endpoint.
 
 ### Pebble Layer
 
-```python
-def _build_pebble_layer(self) -> ops.pebble.LayerDict:
-    """Build Pebble layer for Overseerr."""
-    return {
-        "summary": "Overseerr layer",
-        "services": {
-            "overseerr": {
-                "override": "replace",
-                "command": "/init",
-                "startup": "enabled",
-                "environment": {
-                    "LOG_LEVEL": self.config.get("log-level", "info"),
-                    "TZ": "Etc/UTC",
-                },
-            }
-        },
-        "checks": {
-            "overseerr-ready": {
-                "override": "replace",
-                "level": "ready",
-                "http": {"url": "http://localhost:5055/api/v1/status"},
-                "period": "10s",
-                "timeout": "3s",
-                "threshold": 3,
-            }
-        },
-    }
-```
+Uses the Pebble/LinuxServer.io pattern from [ADR-015](adr-015-pebble-linuxserver-pattern.md):
+- Bypass s6-overlay, run Overseerr binary directly
+- Hardcoded `user-id: 1000` / `group-id: 1000` (no storage relation, see ADR-015)
+
+Overseerr-specific environment:
+- `LOG_LEVEL` - from charm config
+- `TZ=Etc/UTC`
 
 ## charmcraft.yaml
 

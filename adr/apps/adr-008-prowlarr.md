@@ -169,36 +169,13 @@ Key methods:
 
 ### Pebble Layer
 
-```python
-def _build_pebble_layer(self) -> ops.pebble.LayerDict:
-    return {
-        "summary": "Prowlarr layer",
-        "services": {
-            "prowlarr": {
-                "override": "replace",
-                "command": "/app/bin/Prowlarr -nobrowser -data=/config",
-                "startup": "enabled",
-                "environment": {
-                    "PROWLARR__LOG__LEVEL": self._log_level_map.get(
-                        self.config.get("log-level", "info").lower(),
-                        "Info"
-                    ),
-                    "PROWLARR__APP__INSTANCENAME": self.app.name,
-                },
-            }
-        },
-        "checks": {
-            "prowlarr-ready": {
-                "override": "replace",
-                "level": "ready",
-                "http": {"url": "http://localhost:9696/ping"},
-                "period": "10s",
-                "timeout": "3s",
-                "threshold": 3,
-            }
-        },
-    }
-```
+Uses the Pebble/LinuxServer.io pattern from [ADR-015](adr-015-pebble-linuxserver-pattern.md):
+- Run Prowlarr binary directly: `/app/bin/Prowlarr -nobrowser -data=/config`
+- Hardcoded `user-id: 1000` / `group-id: 1000` (no storage relation, see ADR-015)
+
+Prowlarr-specific environment:
+- `PROWLARR__LOG__LEVEL` - from charm config
+- `PROWLARR__APP__INSTANCENAME` - from app name
 
 ### Provider Data Publication
 

@@ -274,36 +274,14 @@ The download client charms (qBittorrent, SABnzbd) are responsible for creating m
 
 ### Pebble Layer
 
-```python
-def _build_pebble_layer(self) -> ops.pebble.LayerDict:
-    return {
-        "summary": "Radarr layer",
-        "services": {
-            "radarr": {
-                "override": "replace",
-                "command": "/app/bin/Radarr -nobrowser -data=/config",
-                "startup": "enabled",
-                "environment": {
-                    "RADARR__LOG__LEVEL": self._log_level_map.get(
-                        self.config.get("log-level", "info").lower(),
-                        "Info"
-                    ),
-                    "RADARR__APP__INSTANCENAME": self.app.name,
-                },
-            }
-        },
-        "checks": {
-            "radarr-ready": {
-                "override": "replace",
-                "level": "ready",
-                "http": {"url": f"http://localhost:{self._service_port}/ping"},
-                "period": "10s",
-                "timeout": "3s",
-                "threshold": 3,
-            }
-        },
-    }
-```
+Uses the Pebble/LinuxServer.io pattern from [ADR-015](adr-015-pebble-linuxserver-pattern.md):
+- Run binary directly: `/app/bin/Radarr -nobrowser -data=/config` (or `/app/bin/Sonarr`)
+- Use Pebble's `user-id`/`group-id` from storage relation
+- Use `fsGroup` for volume permissions
+
+App-specific environment:
+- `RADARR__LOG__LEVEL` / `SONARR__LOG__LEVEL` - from charm config
+- `RADARR__APP__INSTANCENAME` / `SONARR__APP__INSTANCENAME` - from app name
 
 ### Storage Patching
 

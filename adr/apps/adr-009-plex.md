@@ -141,45 +141,14 @@ graph TB
 
 ### Pebble Layer
 
-```python
-def _build_pebble_layer(self) -> ops.pebble.LayerDict:
-    """Build Pebble layer for Plex."""
-    storage = self.media_storage.get_provider()
-    
-    env = {
-        "PUID": str(storage.puid),
-        "PGID": str(storage.pgid),
-        "TZ": "Etc/UTC",
-        "VERSION": "docker",  # Use container's bundled version
-    }
-    
-    # Add claim token if provided and server unclaimed
-    claim_token = self.config.get("claim-token")
-    if claim_token and not self._is_server_claimed():
-        env["PLEX_CLAIM"] = claim_token
-    
-    return {
-        "summary": "Plex Media Server layer",
-        "services": {
-            "plex": {
-                "override": "replace",
-                "command": "/init",
-                "startup": "enabled",
-                "environment": env,
-            }
-        },
-        "checks": {
-            "plex-ready": {
-                "override": "replace",
-                "level": "ready",
-                "http": {"url": "http://localhost:32400/identity"},
-                "period": "10s",
-                "timeout": "5s",
-                "threshold": 3,
-            }
-        },
-    }
-```
+Uses the Pebble/LinuxServer.io pattern from [ADR-015](adr-015-pebble-linuxserver-pattern.md):
+- Bypass s6-overlay, run Plex binary directly (`/usr/lib/plexmediaserver/Plex Media Server`)
+- Use Pebble's `user-id`/`group-id` from storage relation
+- Use `fsGroup` for volume permissions
+
+Plex-specific environment variables:
+- `VERSION=docker` - Use container's bundled version
+- `PLEX_CLAIM` - Claim token for initial server setup (if unclaimed)
 
 ### Hardware Transcoding
 
