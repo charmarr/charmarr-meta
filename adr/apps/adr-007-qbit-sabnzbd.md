@@ -32,7 +32,7 @@ Charmarr requires download client charms to handle torrent (qBittorrent) and Use
 
 **Credentials:**
 - **qBittorrent: Option 2** - Charm generates credentials before first start, writes PBKDF2 hash to config. Ensures credentials are known for sharing via relations.
-- **SABnzbd: Option 1** - Read API key from sabnzbd.ini after workload starts. SABnzbd auto-generates a secure key; no need to reinvent this.
+- **SABnzbd: Option 2** - Charm generates API key before first start, writes to sabnzbd.ini. Consistent with qBittorrent pattern; credentials available immediately without waiting for workload.
 
 **Category Creation: Option 2** - Create categories dynamically when media managers connect. No unnecessary categories, automatic setup.
 
@@ -71,45 +71,45 @@ flowchart TD
 - Radarr/Sonarr need plaintext username/password to authenticate
 - Juju Secrets provide secure storage with access control
 
-#### SABnzbd: Read After Start
+#### SABnzbd: Generate Before Start
 
 ```mermaid
 flowchart TD
-    Start([Charm Reconcile]) --> Check{API Key in<br/>Juju Secret?}
-    
-    Check -->|Yes| Verify{Key still<br/>valid?}
-    Verify -->|Yes| Publish[Publish via relation]
-    Verify -->|No| Read
-    
-    Check -->|No| Ready{Workload<br/>running?}
-    Ready -->|No| Wait[WaitingStatus:<br/>Waiting for SABnzbd]
-    Ready -->|Yes| Read[Read API key from<br/>sabnzbd.ini]
-    
-    Read --> Store[Store in Juju Secret]
-    Store --> Publish
+    Start([Charm Install/Upgrade]) --> Check{API Key<br/>exists in<br/>Juju Secret?}
+
+    Check -->|No| Gen[Generate 32-char hex API key]
+    Gen --> Write[Write API key to sabnzbd.ini<br/>BEFORE workload starts]
+    Write --> Secret[Store in Juju Secret]
+    Secret --> Publish[Publish API key via<br/>download-client relation]
+
+    Check -->|Yes| Read[Read from Juju Secret]
+    Read --> Publish
+
     Publish --> Done([API Key Ready])
-    
+
     style Check fill:#e1f5ff
-    style Verify fill:#e1f5ff
-    style Ready fill:#e1f5ff
-    style Wait fill:#fff9c4
-    style Done fill:#e8f5e9
+    style Gen fill:#fff9c4
+    style Secret fill:#e8f5e9
 ```
+
+**Why this approach?**
+- SABnzbd supports pre-setting API key in sabnzbd.ini before first start
+- Consistent pattern with qBittorrent (credentials ready before workload)
+- No waiting for workload to initialize before publishing to relations
+- Simpler reconciliation flow
 
 ### Reconciler Flow (Shared Pattern)
 
-Both charms follow the same reconciler phases with minor variations:
+Both charms follow the same reconciler phases:
 
 ```mermaid
 flowchart TD
     Start([Reconcile Event]) --> P1{Phase 1:<br/>Container<br/>Connected?}
     P1 -->|No| W1[WaitingStatus:<br/>Waiting for Pebble]
     P1 -->|Yes| P2{Phase 2:<br/>Credentials<br/>Ready?}
-    
-    P2 -->|No, qBit| P2a[Generate Credentials<br/>Write to config file]
-    P2 -->|No, SAB| P2b[Read API key from<br/>sabnzbd.ini]
+
+    P2 -->|No| P2a[Generate Credentials<br/>Write to config file]
     P2a --> P2c[Store in Juju Secret]
-    P2b --> P2c
     P2c --> P3
     P2 -->|Yes| P3{Phase 3:<br/>Media Storage<br/>Ready?}
     
@@ -362,24 +362,34 @@ Session\\DisableAutoTMMByDefault=false
 
 ## SABnzbd-Specific Details
 
-### API Key Reading
+### API Key Generation
 
 ```python
-def _read_api_key(self) -> str | None:
-    """Read API key from SABnzbd config file."""
+import secrets
+
+def _generate_api_key() -> str:
+    """Generate a 32-character hex API key (SABnzbd format)."""
+    return secrets.token_hex(16)
+
+def _build_sabnzbd_config(api_key: str) -> str:
+    """Build minimal sabnzbd.ini with API key and required settings.
+
+    This config is written BEFORE the first Pebble start so SABnzbd
+    reads it on startup. Only includes essential settings; SABnzbd fills
+    in defaults for everything else.
+    """
+    return f"""[misc]
+api_key = {api_key}
+host = 0.0.0.0
+port = 8080
+local_ranges = 10., 172.16., 172.17., 172.18., 172.19., 172.20., 172.21., 172.22., 172.23., 172.24., 172.25., 172.26., 172.27., 172.28., 172.29., 172.30., 172.31., 192.168.
+"""
+
+def _write_initial_config(self, api_key: str) -> None:
+    """Write sabnzbd.ini before first start."""
+    config_content = _build_sabnzbd_config(api_key)
     container = self.unit.get_container("sabnzbd")
-    
-    try:
-        config_path = "/config/sabnzbd.ini"
-        content = container.pull(config_path).read()
-        
-        import configparser
-        config = configparser.ConfigParser()
-        config.read_string(content)
-        
-        return config.get("misc", "api_key", fallback=None)
-    except Exception:
-        return None
+    container.push("/config/sabnzbd.ini", config_content, make_dirs=True)
 ```
 
 ### API Key Rotation Action
@@ -387,22 +397,24 @@ def _read_api_key(self) -> str | None:
 ```python
 def _on_rotate_api_key_action(self, event: ActionEvent) -> None:
     """Handle rotate-api-key action."""
-    
-    # Generate new API key via SABnzbd API
+    if not self.unit.is_leader():
+        event.fail("Only leader can rotate API key")
+        return
+
+    # Generate new API key
     new_key = secrets.token_hex(16)
-    self._api_call("config", {
-        "section": "misc",
-        "keyword": "api_key",
-        "value": new_key,
-    })
-    
+
     # Update Juju secret
-    secret = self.model.get_secret(id=self._api_key_secret_id)
+    secret = self.model.get_secret(label=API_KEY_SECRET_LABEL)
     secret.set_content({"api-key": new_key})
-    
-    # Trigger relation data update
-    self._publish_provider_data()
-    
+
+    # Stop workload, rewrite config, restart
+    container = self.unit.get_container("sabnzbd")
+    if container.can_connect():
+        container.stop(SERVICE_NAME)
+        self._write_initial_config(new_key)
+        container.replan()
+
     event.set_results({"message": "API key rotated successfully"})
 ```
 
@@ -414,8 +426,9 @@ def _on_rotate_api_key_action(self, event: ActionEvent) -> None:
 | Container name | `qbittorrent` | `sabnzbd` |
 | Protocol | BitTorrent | Usenet |
 | Auth method | Username + Password | API Key |
-| Credential source | Charm generates | App generates |
-| When to read creds | Before first start | After first start |
+| Credential source | Charm generates | Charm generates |
+| When to write creds | Before first start | Before first start |
+| Config file | `/config/qBittorrent/config/qBittorrent.conf` | `/config/sabnzbd.ini` |
 | Category path type | Absolute (`/data/torrents/movies`) | Relative (`movies`) |
 | Category API | `POST /api/v2/torrents/createCategory` | `GET /api?mode=set_config&section=categories` |
 | Base folder | `save_path` in preferences | `complete_dir` in misc |
@@ -598,19 +611,19 @@ actions:
 
 * **Single ADR for both clients** - Consistent patterns, easier maintenance
 * **Automatic credential management** - No manual setup, secure by default
+* **Consistent credential flow** - Both charms generate and write credentials before workload starts
 * **Dynamic categories** - Created on-demand when media managers connect
 * **Trash Guides compliant** - Proper folder structure for hardlinks
 * **Multiple instance support** - `radarr-4k` and `radarr-1080p` get separate categories automatically
 * **VPN optional** - Works without VPN (with warning), full support when related
 * **PUID/PGID from storage** - Consistent file ownership across all apps
-* **Shared reconciler pattern** - ~80% code reuse between implementations
+* **Shared reconciler pattern** - ~90% code reuse between implementations
 
 ### Bad
 
 * **Requires media-storage relation** - Cannot function without shared storage
-* **Config file manipulation** - qBittorrent requires writing config before first start
+* **Config file manipulation** - Both charms require writing config before first start
 * **Categories never deleted** - Orphaned categories persist (safe, but not clean)
-* **SABnzbd API key only after start** - Must wait for SABnzbd to initialize
 
 ## Related MADRs
 
