@@ -2,9 +2,11 @@
 
 ## Context and Problem Statement
 
-Charmarr requires a Plex Media Server charm to serve media to users. Unlike arr apps, Plex doesn't need programmatic integration with other Charmarr components - it simply watches the filesystem for media files. The charm needs to handle initial server claiming, hardware transcoding, and storage integration.
+Charmarr requires a Plex Media Server charm to serve media to users. The charm needs to handle initial server claiming, hardware transcoding, storage integration, automatic library creation from media manager relations, and providing connection info for request managers.
 
-**Key insight:** Plex does NOT need a relation to Overseerr. Overseerr discovers Plex servers automatically via plex.tv after the user completes OAuth. Users select their Plex server from a dropdown - they don't enter URLs manually. Therefore, no `media-server` interface is needed.
+**Key capabilities:**
+- Auto-creates Plex libraries based on media-manager relation data from Radarr/Sonarr (root folders and content variants)
+- Provides `media-server` interface for Overseerr to enable service mesh authorization policies
 
 ## Considered Options
 
@@ -18,9 +20,13 @@ Charmarr requires a Plex Media Server charm to serve media to users. Unlike arr 
 * **Option 2:** Config option to enable hardware transcoding
 * **Option 3:** Auto-detect GPU availability
 
+### Library Creation
+* **Option 1:** Manual library setup - User configures libraries in Plex UI
+* **Option 2:** Auto-create libraries from media-manager relation data
+
 ### Plex-to-Overseerr Integration
-* **Option 1:** Create `media-server` interface for URL sharing
-* **Option 2:** No interface - Overseerr auto-discovers via plex.tv
+* **Option 1:** Create `media-server` interface for service mesh authorization
+* **Option 2:** No interface - Overseerr auto-discovers via plex.tv only
 
 ## Decision Outcome
 
@@ -28,31 +34,9 @@ Charmarr requires a Plex Media Server charm to serve media to users. Unlike arr 
 
 **Hardware transcoding: Option 2** - Config option. Not all nodes have Intel iGPU, and Plex Pass is required.
 
-**Overseerr integration: Option 2** - No interface needed. After OAuth, Overseerr queries plex.tv which returns all Plex servers the user has access to. User selects from dropdown - no URL typing required.
+**Library creation: Option 2** - Auto-create libraries from media-manager relations. Each Radarr/Sonarr instance publishes its root folders and content variant, Plex creates matching libraries.
 
-### Why No media-server Interface?
-
-We initially planned a `media-server` interface for Plex to publish its URL to Overseerr. Research revealed this adds zero value:
-
-1. **Overseerr setup flow:**
-   - User signs into Overseerr with Plex account (OAuth)
-   - User clicks "refresh" button next to Server dropdown
-   - Overseerr queries plex.tv with user's auth token
-   - plex.tv returns list of all Plex servers user has access to
-   - User selects server from dropdown (auto-populated)
-
-2. **Why pre-filling doesn't help:**
-   - Users don't type URLs - they select from dropdown
-   - Dropdown is auto-populated by plex.tv
-   - plex.tv knows about servers even on private networks
-   - Pre-filled URL would be redundant or confusing
-
-3. **Comparison with Jellyfin (future):**
-   - Jellyseerr → Jellyfin requires: hostname + API key
-   - Overseerr → Plex requires: OAuth only (plex.tv handles discovery)
-   - Different auth models = different interface needs
-
-**Conclusion:** Skip `media-server` interface entirely. Re-evaluate when adding Jellyfin support - may need interface for Jellyseerr integration.
+**Overseerr integration: Option 1** - Provide `media-server` interface. While Overseerr discovers Plex via plex.tv OAuth, the relation enables service mesh authorization policies so Overseerr can communicate with Plex in meshed environments.
 
 ## Implementation Details
 
@@ -63,38 +47,44 @@ flowchart TD
     Start([Reconcile Event]) --> Scale{Planned Units > 1?}
     Scale -->|Yes| Block[BlockedStatus: Scaling not supported]
     Scale -->|No| P1{Container Connected?}
-    
+
     P1 -->|No| W1[WaitingStatus: Waiting for Pebble]
     P1 -->|Yes| P2{Media Storage Ready?}
-    
+
     P2 -->|No| P2a[Patch StatefulSet for shared PVC]
     P2a --> W2[WaitingStatus: Waiting for storage]
     P2 -->|Yes| P3{Hardware Transcoding Enabled?}
-    
+
     P3 -->|Yes| P3a[Patch StatefulSet: mount /dev/dri]
     P3 -->|No| P4
     P3a --> P4[Configure Pebble Layer]
-    
+
     P4 --> P5{Claim Token in Config?}
     P5 -->|Yes, Unclaimed| P5a[Write PLEX_CLAIM to env]
     P5 -->|No or Already Claimed| P6
     P5a --> P6[Start/Update Workload]
-    
+
     P6 --> P7{Workload Healthy?}
     P7 -->|No| W3[WaitingStatus: Starting Plex]
-    P7 -->|Yes| P8{Ingress Related?}
-    
-    P8 -->|Yes| P8a[Submit IstioIngressRouteConfig]
-    P8 -->|No| Done
-    P8a --> Done([ActiveStatus: Ready])
-    
+    P7 -->|Yes| P8[Publish media-server data]
+
+    P8 --> P9{Media Managers Related?}
+    P9 -->|Yes| P9a[Reconcile Libraries<br/>from root folders]
+    P9 -->|No| P10
+    P9a --> P10{Ingress Related?}
+
+    P10 -->|Yes| P10a[Submit IstioIngressRouteConfig]
+    P10 -->|No| Done
+    P10a --> Done([ActiveStatus: Ready])
+
     style Scale fill:#e1f5ff
     style P1 fill:#e1f5ff
     style P2 fill:#e1f5ff
     style P3 fill:#e1f5ff
     style P5 fill:#e1f5ff
     style P7 fill:#e1f5ff
-    style P8 fill:#e1f5ff
+    style P9 fill:#e1f5ff
+    style P10 fill:#e1f5ff
     style Block fill:#ffebee
     style W1 fill:#fff9c4
     style W2 fill:#fff9c4
@@ -111,28 +101,38 @@ graph TB
         pebble[Pebble]
         plex[Plex Media Server]
     end
-    
+
     subgraph "Storage"
         config[Config PVC<br/>/config<br/>Juju-managed]
         media[Shared PVC<br/>/data<br/>via relation]
     end
-    
+
+    subgraph "Media Managers"
+        radarr[Radarr]
+        sonarr[Sonarr]
+    end
+
     subgraph "External"
         user[User Browser]
         plextv[plex.tv]
         overseerr[Overseerr]
     end
-    
+
     charm -->|configures| pebble
     pebble -->|manages| plex
     plex -->|reads| config
     plex -->|reads| media
-    
+
+    radarr -->|media-manager relation<br/>root folders, variant| charm
+    sonarr -->|media-manager relation<br/>root folders, variant| charm
+    charm -->|auto-creates libraries| plex
+
+    charm -->|media-server relation<br/>api_url| overseerr
     user -->|stream/browse| plex
     plex <-->|auth, remote access| plextv
     overseerr -->|discovers servers| plextv
     user -->|requests| overseerr
-    
+
     style charm fill:#e1f5ff
     style plex fill:#fff4e1
     style config fill:#e8f5e9
@@ -230,6 +230,23 @@ def _is_server_claimed(self) -> bool:
         return False
 ```
 
+### Automatic Library Creation
+
+When media managers (Radarr/Sonarr) are related via the `media-manager` interface, Plex automatically creates libraries based on their root folders and content variants.
+
+**Library naming convention:**
+
+| Manager | Variant | Library Name |
+|---------|---------|--------------|
+| Radarr | standard | Movies |
+| Radarr | 4k | Movies (4K) |
+| Radarr | anime | Anime Movies |
+| Sonarr | standard | TV Shows |
+| Sonarr | 4k | TV Shows (4K) |
+| Sonarr | anime | Anime |
+
+Libraries are only created if a library doesn't already exist for that root folder path, ensuring user customizations are preserved.
+
 ### Remote Access via Tailscale
 
 Plex has built-in "Remote Access" that uses UPnP/NAT-PMP to punch through firewalls. For Charmarr deployments using Tailscale:
@@ -261,14 +278,14 @@ description: |
 
   This charm provides:
   - Automatic media storage integration via relation
+  - Automatic library creation from Radarr/Sonarr relations
   - Optional hardware transcoding (Intel QuickSync)
   - Ingress integration for remote access
 
   After deployment:
-  1. Access Plex UI via ingress or port-forward
-  2. Sign in with your Plex account (or use claim-token config)
-  3. Configure libraries pointing to /data/media
-  4. (Optional) Configure Tailscale URL for remote access
+  1. Set claim-token config (from plex.tv/claim) to claim server
+  2. Relate to radarr-k8s and sonarr-k8s for automatic library setup
+  3. Libraries are created automatically based on media manager folders
 
   Note: Plex is automatically discovered by Overseerr via plex.tv
   after OAuth - no manual URL configuration needed.
@@ -316,13 +333,21 @@ storage:
       Plex configuration and metadata database.
       Recommend 10GB+ for large libraries (thumbnails, metadata).
 
-# NO provides section - Plex doesn't provide any interfaces
-# Overseerr discovers Plex via plex.tv, not via Juju relation
+provides:
+  media-server:
+    interface: media-server
+    description: Publish Plex API endpoint for request managers (Overseerr)
 
 requires:
   media-storage:
     interface: media-storage
     limit: 1
+  media-manager:
+    interface: media-manager
+    optional: true
+    description: |
+      Receive media manager info from Radarr/Sonarr for automatic library creation.
+      Libraries are created based on each media manager's root folders.
   ingress:
     interface: istio_ingress_route
     limit: 1
@@ -393,46 +418,52 @@ juju relate plex istio-ingress
 
 ### Library Setup
 
-After deployment:
-1. Access Plex UI (via ingress URL or port-forward)
-2. Sign in with Plex account (claims server if unclaimed)
-3. Add libraries:
-   - Movies: `/data/media/movies`
-   - TV Shows: `/data/media/tv`
-   - Music: `/data/media/music`
+Libraries are created automatically when Radarr/Sonarr are related:
+
+```bash
+# Relate media managers to Plex
+juju relate plex radarr
+juju relate plex sonarr
+juju relate plex radarr-4k
+juju relate plex sonarr-anime
+
+# Libraries created automatically:
+# - Movies (from radarr at /data/media/movies)
+# - TV Shows (from sonarr at /data/media/tv)
+# - Movies (4K) (from radarr-4k at /data/media/movies-uhd)
+# - Anime (from sonarr-anime at /data/media/anime/tv)
+```
 
 ### Overseerr Integration
 
-No Juju relation needed! After deploying Overseerr:
-1. Open Overseerr setup wizard
-2. Sign in with Plex account (OAuth)
-3. Click refresh next to Server dropdown
-4. Select your Plex server from the list (auto-populated by plex.tv)
-5. Continue with library sync
+Overseerr discovers Plex via plex.tv OAuth. The `media-server` relation enables service mesh authorization so Overseerr can communicate with Plex in meshed environments.
+
+```bash
+juju relate overseerr plex
+```
 
 ## Consequences
 
 ### Good
 
-* **Simple charm** - No complex API integrations, just storage and optional ingress
-* **No unnecessary interface** - Skipping `media-server` avoids complexity with zero benefit
+* **Automatic library creation** - Libraries created from media manager relations without manual setup
 * **Hardware transcoding support** - Intel QuickSync for smooth playback
 * **Flexible claiming** - Automated or manual, user's choice
 * **Works with Tailscale** - Custom server access URL for secure remote access
+* **Service mesh support** - media-server relation enables authorization policies
 
 ### Bad
 
-* **Manual library setup** - User must configure libraries in Plex UI (can't automate)
 * **Privileged container for transcoding** - Security tradeoff for hardware access
 * **Claim token expires quickly** - 4-minute window for automated claiming
 
 ### Neutral
 
-* **No programmatic Overseerr integration** - But this matches how Overseerr actually works
 * **Plex Pass required for transcoding** - Hardware limitation, not charm limitation
 
 ## Related MADRs
 
 - [storage/adr-001](../storage/adr-001-shared-pvc-architecture.md) - Shared PVC for media files
 - [interfaces/adr-005](../interfaces/adr-005-media-storage.md) - media-storage interface
+- [interfaces/adr-006](../interfaces/adr-006-media-manager.md) - media-manager interface (for library creation)
 - [apps/adr-012](./adr-012-app-scaling-v1.md) - Single-instance scaling constraints

@@ -12,20 +12,26 @@ Charmarr aims to provide better automation than Docker Compose setups. A key pai
 ## Considered Options
 
 * **Option A:** Embed Recyclarr in arr charms - Bundle binary, run during reconciliation
-* **Option B:** Separate Recyclarr charm - Deploy as CronJob, relate to arr apps
-* **Option C:** Manual user configuration - Users run Recyclarr themselves or configure profiles manually
+* **Option B:** Sidecar container - Run Recyclarr as a separate container in the same pod
+* **Option C:** Separate Recyclarr charm - Deploy as CronJob, relate to arr apps
+* **Option D:** Manual user configuration - Users run Recyclarr themselves or configure profiles manually
 
 ## Decision Outcome
 
-Chosen option: **Option A - Embed Recyclarr in arr charms**, because it provides massive UX improvement with trivial implementation complexity (~100 lines of code) while remaining optional for users who want manual control.
+Chosen option: **Option B - Sidecar container**, because it provides the same UX benefits as embedding while using standard OCI images and avoiding binary management in the charm.
 
 ### Rationale
 
-**Why embed (not separate charm):**
+**Why sidecar container (not embedded binary):**
+- Uses official Recyclarr OCI image (`ghcr.io/recyclarr/recyclarr:latest`)
+- No need to bundle binaries in charmcraft parts
+- Automatic updates via Juju resource management
+- Same pod networking allows localhost API access to arr apps
+
+**Why not separate charm:**
 - Recyclarr is a simple CLI tool, not a complex service
 - Separate charm adds maintenance burden, relation design, duplicate credentials
-- Embedding is ~100 lines vs ~500+ lines for separate charm
-- No architectural complexity - just a subprocess call
+- No architectural complexity needed
 
 **Why automate (not manual):**
 - This is a key differentiator vs Docker Compose (batteries included)
@@ -57,12 +63,11 @@ and the performance cost is negligible (~2-5 seconds per reconcile).
 ### Consequences
 
 * Good: Massive UX win - auto-configured Trash Guides profiles
-* Good: Trivial implementation - just run a binary, ~100 lines total
+* Good: Uses official OCI image - no binary management
 * Good: Optional - disable via config for manual control
 * Good: No interface pollution - quality profiles stay internal to arr instance
 * Good: Fits "for the love of the game" philosophy
-* Bad: Charm package ~20MB larger (includes binary)
-* Bad: Need to update charm to get new Recyclarr version (acceptable)
+* Good: Recyclarr updates independent of charm updates (via Juju resources)
 * Neutral: First profile becomes default in Overseerr (arbitrary but can be changed)
 
 ## Implementation Design
@@ -99,116 +104,63 @@ sync-trash-profiles:
     Run this when Trash Guides update their recommendations.
 ```
 
-### Charmcraft Parts (Binary Download)
+### Charmcraft Configuration (Sidecar Container)
 
 ```yaml
 # charmcraft.yaml
-parts:
+containers:
+  radarr:
+    resource: radarr-image
+    mounts:
+      - storage: config
+        location: /config
   recyclarr:
-    plugin: dump
-    source: https://github.com/recyclarr/recyclarr/releases/download/v7.4.0/recyclarr-linux-x64.tar.xz
-    override-pull: |
-      curl -L https://github.com/recyclarr/recyclarr/releases/latest/download/recyclarr-linux-x64.tar.xz \
-        -o recyclarr.tar.xz
-      tar -xf recyclarr.tar.xz
-      rm recyclarr.tar.xz
-    organize:
-      recyclarr: bin/recyclarr
+    resource: recyclarr-image
+
+resources:
+  radarr-image:
+    type: oci-image
+    description: OCI image for Radarr (LinuxServer)
+    upstream-source: lscr.io/linuxserver/radarr:latest
+  recyclarr-image:
+    type: oci-image
+    description: OCI image for Recyclarr
+    upstream-source: ghcr.io/recyclarr/recyclarr:latest
 ```
 
 ### Charm Implementation
 
+The charm executes Recyclarr in the sidecar container via Pebble:
+
 ```python
-class RadarrCharm(CharmBase):
-    def __init__(self, *args):
-        super().__init__(*args)
-        # ... other initialization ...
-        self.framework.observe(self.on.sync_trash_profiles_action, self._on_sync_trash_profiles)
-    
-    def _reconcile(self, event):
-        """Main reconciler - handles all events."""
-        # ... other reconciliation logic ...
-        
-        # Sync profiles if configured
-        trash_profiles = self.config.get("trash-profiles", "").strip()
-        if trash_profiles:
-            self._sync_trash_profiles(trash_profiles)
-        
-        # Publish quality profiles to media-manager relation
-        self._publish_quality_profiles()
-    
-    def _sync_trash_profiles(self, profiles_config: str):
-        """Run Recyclarr to sync Trash Guides profiles."""
-        # Generate Recyclarr config
-        profiles_list = [p.strip() for p in profiles_config.split(",") if p.strip()]
-        recyclarr_config = self._generate_recyclarr_config(profiles_list)
-        
-        # Write config to temp file
-        config_path = "/tmp/recyclarr.yml"
-        Path(config_path).write_text(recyclarr_config)
-        
-        # Run recyclarr (binary in charm container, API calls to localhost)
-        recyclarr_bin = Path(self.charm_dir) / "bin" / "recyclarr"
-        result = subprocess.run(
-            [str(recyclarr_bin), "sync", "--config", config_path],
-            capture_output=True,
-            text=True,
-            timeout=120,
-        )
-        
-        if result.returncode != 0:
-            logger.error(f"Recyclarr sync failed: {result.stderr}")
-            raise Exception(f"Recyclarr sync failed: {result.stderr}")
-        
-        logger.info(f"Recyclarr sync successful: {result.stdout}")
-    
-    def _generate_recyclarr_config(self, profiles: list[str]) -> str:
-        """Generate Recyclarr YAML config from profile list."""
-        # Recyclarr calls Radarr at localhost:7878 (same pod)
-        return f"""
-radarr:
-  radarr:
-    base_url: http://localhost:7878
-    api_key: {self.radarr_api_key}
-    
-    quality_profiles:
-      - trash_ids:
-{chr(10).join(f"          - {profile}" for profile in profiles)}
-"""
-    
-    def _publish_quality_profiles(self):
-        """Query Radarr API and publish profiles to relation."""
-        # Query Radarr for current profiles
-        response = requests.get(
-            "http://localhost:7878/api/v3/qualityprofile",
-            headers={"X-Api-Key": self.radarr_api_key}
-        )
-        profiles = [
-            QualityProfile(id=p["id"], name=p["name"])
-            for p in response.json()
-        ]
-        
-        # Update relation data
-        provider_data = MediaManagerProviderData(
-            quality_profiles=profiles,
-            # ... other fields ...
-        )
-        self.media_manager_provider.publish_data(provider_data)
-    
-    def _on_sync_trash_profiles(self, event):
-        """Action handler for manual profile sync."""
-        trash_profiles = self.config.get("trash-profiles", "").strip()
-        if not trash_profiles:
-            event.fail("trash-profiles config is not set")
-            return
-        
-        try:
-            self._sync_trash_profiles(trash_profiles)
-            self._publish_quality_profiles()
-            event.set_results({"result": "Profiles synced successfully"})
-        except Exception as e:
-            event.fail(str(e))
+def _sync_trash_profiles(self, api_key: str) -> None:
+    """Sync Trash Guides quality profiles via Recyclarr sidecar container."""
+    profiles_config = str(self.config.get("trash-profiles", "")).strip()
+    if not profiles_config:
+        # Use variant defaults if no explicit config
+        profiles_config = get_default_trash_profiles(self._variant)
+    if not profiles_config:
+        return
+
+    container = self.unit.get_container("recyclarr")
+    if not container.can_connect():
+        logger.warning("Recyclarr container not ready, skipping profile sync")
+        return
+
+    sync_trash_profiles(
+        container=container,
+        manager=MediaManager.RADARR,
+        api_key=api_key,
+        profiles=profiles_config,
+        api_url="http://localhost:7878",
+    )
 ```
+
+The `sync_trash_profiles` function from charmarr-lib:
+1. Generates a Recyclarr YAML config
+2. Pushes it to the sidecar container
+3. Executes `recyclarr sync` via Pebble exec
+4. Parses output for errors
 
 ## User Experience
 
@@ -285,37 +237,21 @@ After Recyclarr creates profiles in Radarr:
 
 ## Key Technical Details
 
-**Why Recyclarr runs in charm container (not workload):**
-- Charm and workload share same Kubernetes pod
-- Both can access `localhost:7878` (Radarr API)
-- No need to push binary into workload container
-- Cleaner separation: charm handles automation, workload runs service
+**Why Recyclarr runs as sidecar container:**
+- All containers in same Kubernetes pod share networking
+- Recyclarr can access `localhost:7878` (Radarr API)
+- Uses official OCI image - no binary management
+- Cleaner separation: charm orchestrates, containers run services
 
-**Binary location:**
-- Downloaded during charm build via Charmcraft parts
-- Located at: `{charm_dir}/bin/recyclarr`
-- Executable directly from charm code
+**Container setup:**
+- Recyclarr image: `ghcr.io/recyclarr/recyclarr:latest`
+- Managed via Pebble (no persistent service - runs on demand)
+- Config generated and pushed to container at runtime
 
 **API access:**
 - Recyclarr calls: `http://localhost:7878/api/v3/*`
 - Same pod networking enables this
-- Uses Radarr API key from charm config
-
-## Implementation Complexity
-
-```
-Total implementation: ~100 lines of code
-- Charmcraft parts config: ~10 lines
-- Config YAML generation: ~20 lines
-- Subprocess execution: ~15 lines
-- Error handling: ~15 lines
-- Profile publishing: ~20 lines
-- Action handler: ~20 lines
-```
-
-Compare to alternatives:
-- Separate charm: ~500+ lines + relation interface design
-- Manual configuration: Documentation burden, user toil
+- Uses API key from Juju secret
 
 ## Related Decisions
 

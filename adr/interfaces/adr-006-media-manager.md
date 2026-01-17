@@ -84,22 +84,22 @@ class QualityProfile(BaseModel):
 
 class MediaManagerProviderData(BaseModel):
     """Data published by media manager charms (Radarr, Sonarr, etc.)"""
-    
+
     # Connection details
     api_url: str = Field(description="Full API URL (e.g., http://radarr:7878)")
     api_key_secret_id: str = Field(description="Juju secret ID containing API key")
-    
+
     # Identity
     manager: MediaManager = Field(description="Type of media manager")
     instance_name: str = Field(description="Juju app name (e.g., radarr-4k)")
     base_path: Optional[str] = Field(default=None, description="URL base path if configured")
-    
-    # Configuration (NEW - populated from Radarr API after Recyclarr sync)
+
+    # Configuration (populated from Radarr API after Recyclarr sync)
     quality_profiles: list[QualityProfile] = Field(description="Available quality profiles")
     root_folders: list[str] = Field(description="Available root folder paths")
-    is_4k: bool = Field(
-        default=False,
-        description="Whether this instance handles 4K content (set via charm config, not inferred from profile names)"
+    variant: ContentVariant = Field(
+        default=ContentVariant.STANDARD,
+        description="Content variant: standard (catch-all), uhd (4K), or anime"
     )
 ```
 
@@ -146,8 +146,8 @@ class RadarrCharm(CharmBase):
         )
         root_folders = [f["path"] for f in folders_response.json()]
 
-        # Get is_4k from charm config (explicit configuration, not inferred)
-        is_4k = self.config.get("is-4k", False)
+        # Get variant from charm config
+        variant = ContentVariant(self.config.get("variant", "standard"))
 
         # Publish to relation
         provider_data = MediaManagerProviderData(
@@ -157,7 +157,7 @@ class RadarrCharm(CharmBase):
             instance_name=self.app.name,
             quality_profiles=profiles,
             root_folders=root_folders,
-            is_4k=is_4k,
+            variant=variant,
         )
         self.media_manager_provider.publish_data(provider_data)
 ```
@@ -183,9 +183,11 @@ class OverseerrCharm(CharmBase):
         )
         
         # 3. Determine default server flag (only if no default exists for this tier)
+        # 4K tier: variant == ContentVariant.UHD
+        is_4k_tier = provider.variant == ContentVariant.UHD
         has_default_for_tier = any(
-            s.get('isDefault', False) and 
-            s.get('is4k', False) == provider.is_4k
+            s.get('isDefault', False) and
+            s.get('is4k', False) == is_4k_tier
             for s in existing_servers
             if s['name'] != provider.instance_name  # Exclude current server
         )
@@ -206,7 +208,7 @@ class OverseerrCharm(CharmBase):
             "port": int(provider.api_url.split(":")[-1]),
             "apiKey": self._get_api_key(provider.api_key_secret_id),
             "useSsl": provider.api_url.startswith("https"),
-            "is4k": provider.is_4k,
+            "is4k": is_4k_tier,  # UHD variant maps to Overseerr's 4K tier
             "isDefault": is_default,
             "activeProfileId": profile_id,
             "activeDirectory": provider.root_folders[0],
@@ -231,20 +233,20 @@ class OverseerrCharm(CharmBase):
 ## User Experience Flow
 
 ```bash
-# Deploy Radarr instances with explicit 4K flag (see Apps ADR 003):
-juju deploy radarr radarr-1080p --config trash-profiles="hd-bluray-web"
-juju deploy radarr radarr-1080p-remux --config trash-profiles="remux-web-1080p"
-juju deploy radarr radarr-4k --config trash-profiles="uhd-bluray-web" --config is-4k=true
+# Deploy Radarr instances with variant config (see Apps ADR 004):
+juju deploy radarr radarr --config variant="standard"
+juju deploy radarr radarr-4k --config variant="4k"
+juju deploy radarr radarr-anime --config variant="anime"
 
 # Relate to Overseerr:
-juju relate overseerr radarr-1080p
-juju relate overseerr radarr-1080p-remux
+juju relate overseerr radarr
 juju relate overseerr radarr-4k
+juju relate overseerr radarr-anime
 
 # Result in Overseerr (automatic):
-# - radarr-1080p: isDefault=true, is_4k=false, profile="HD-Bluray+WEB"
-# - radarr-1080p-remux: isDefault=false, is_4k=false, profile="Remux-1080p"
-# - radarr-4k: isDefault=true, is_4k=true, profile="UHD-Bluray+WEB"
+# - radarr: isDefault=true, is4k=false, profile="HD-Bluray+WEB"
+# - radarr-4k: isDefault=true, is4k=true, profile="UHD-Bluray+WEB"
+# - radarr-anime: isDefault=false, is4k=false, profile="Anime"
 
 # User can customize in Overseerr UI (optional):
 # - Change default server for standard or 4K tier

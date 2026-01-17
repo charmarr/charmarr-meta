@@ -26,23 +26,29 @@ Chosen option: "Create a dedicated charmarr-storage charm that owns and manages 
 **Charm Configuration:**
 
 The storage charm exposes the following configuration options:
-- `backend-type`: Required, either "storage-class" or "native-nfs", determines which resources the charm manages
+- `backend-type`: Required, one of "storage-class", "native-nfs", or "hostpath", determines which resources the charm manages
 - `storage-class`: Which Kubernetes StorageClass to use (e.g., "topolvm-provisioner", "local-path", "nfs-csi")
 - `nfs-server`: For charmarr managed K8s native NFS driver, the NFS server IP address or hostname
 - `nfs-path`: For charmarr managed K8s native NFS driver, the export path on the NFS server
+- `hostpath`: Host filesystem path for single-node deployments (e.g., "/media", "/mnt/storage/charmarr")
 - `size`: Storage capacity to provision (see [ADR-001](adr-001-shared-pvc-architecture.md) for access mode and provisioning details)
 
 **Backend Selection Guidance:**
 
 The choice of storage backend depends on your deployment scenario:
 
-**Use local storage with simpler provisioners (local-path, hostPath) when:**
-- Running single-node MicroK8s for homelab/testing
-- You already have filesystem-level redundancy (ZFS, BTRFS, hardware RAID)
-- You prioritize simplicity over enterprise features
-- Your storage is managed at the filesystem layer, not the Kubernetes layer
+**Use hostpath backend when:**
+- Running single-node clusters (MicroK8s, k3s, kind)
+- You have existing local storage with filesystem-level redundancy (ZFS, BTRFS)
+- You want direct host filesystem access without StorageClass complexity
+- Best for homelab/testing scenarios with pre-existing storage
 
-**Use NFS storage when:**
+**Use storage-class backend when:**
+- You have a Kubernetes StorageClass already configured
+- You want the CSI driver to handle provisioning and expansion
+- Examples: local-path, topolvm-provisioner, nfs-csi
+
+**Use native-nfs backend when:**
 - **Going multi-node** - NFS provides ReadWriteMany access so pods can be scheduled on any node
 - You have a dedicated NAS appliance (Synology, TrueNAS, etc.) that handles redundancy
 - Your media storage is already on a network file server
@@ -51,7 +57,7 @@ The choice of storage backend depends on your deployment scenario:
 
 For HA, other than NFS, also consider other solutions including Rook-Ceph and GlusterFS.
 
-Again, charmarr will never handle setting up or configuring different storage backends. User is responsible for setting up the StorageClass and passing it down to the storage charm. Only exception being the K8s native NFS driver (because it's K8s native and simple).
+Again, charmarr will never handle setting up or configuring different storage backends. User is responsible for setting up the StorageClass and passing it down to the storage charm. Only exceptions being the K8s native NFS driver and hostpath (because they're K8s native and simple).
 
 **Reconciler Pattern:**
 
@@ -61,7 +67,7 @@ The charm implements a reconciler that continuously ensures actual state matches
 - Relation events when consuming charms connect or disconnect
 
 The reconciler workflow:
-1. Check if required Kubernetes resources exist (PVC for `storage-class`, PV and PVC for `native-nfs`)
+1. Check if required Kubernetes resources exist (PVC for `storage-class`, PV and PVC for `native-nfs` and `hostpath`)
 2. Compare current resource specifications with desired configuration
 3. Create missing resources or patch existing ones to match desired state
 4. Watch for resource conditions indicating success or failure

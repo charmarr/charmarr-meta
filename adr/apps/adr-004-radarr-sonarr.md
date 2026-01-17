@@ -383,13 +383,26 @@ requires:
 
 config:
   options:
+    variant:
+      type: string
+      default: "standard"
+      description: |
+        Content variant for this instance. Determines root folder and default
+        trash profiles.
+
+        Options:
+          - standard: Default catch-all (/data/media/movies), no default profiles
+          - 4k: UHD content (/data/media/movies-uhd), default: uhd-bluray-web
+          - anime: Anime content (/data/media/anime/movies), default: anime
+
     trash-profiles:
       type: string
       default: ""
       description: |
-        Comma-separated list of Trash Guide profile templates to sync via Recyclarr.
+        Override default Trash Guide profiles for this variant.
 
-        Leave empty to skip auto-configuration (manual profile management).
+        When empty, uses variant defaults (4k: uhd-bluray-web, anime: anime).
+        Set explicitly to override or use different profiles.
 
         Examples:
           - hd-bluray-web (1080p Bluray + WEB-DL)
@@ -413,7 +426,7 @@ actions:
   sync-trash-profiles:
     description: |
       Manually sync quality profiles and custom formats from Trash Guides via Recyclarr.
-      Requires trash-profiles config to be set.
+      Uses trash-profiles config if set, otherwise variant defaults (4k/anime only).
 
   rotate-api-key:
     description: |
@@ -429,7 +442,9 @@ actions:
 | Charm name | `radarr-k8s` | `sonarr-k8s` |
 | Container name | `radarr` | `sonarr` |
 | Service port | 7878 | 8989 |
-| Root folder | `/data/media/movies` | `/data/media/tv` |
+| Root folder (standard) | `/data/media/movies` | `/data/media/tv` |
+| Root folder (4k) | `/data/media/movies-uhd` | `/data/media/tv-uhd` |
+| Root folder (anime) | `/data/media/anime/movies` | `/data/media/anime/tv` |
 | Manager enum | `MediaManager.RADARR` | `MediaManager.SONARR` |
 | Category field | `movieCategory` | `tvCategory` |
 | Trash profile examples | hd-bluray-web, uhd-bluray-web | web-1080p, web-2160p |
