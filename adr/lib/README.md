@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="../../assets/charmarr-charmarr-adr.png" width="350" alt="Charmarr ADR">
-</p>
-
 # Charmarr Library Architecture
 
 This directory contains the architectural decision records (ADRs) for shared code libraries used across Charmarr charms.

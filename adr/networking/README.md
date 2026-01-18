@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="../../assets/charmarr-charmarr-adr.png" width="350" alt="Charmarr ADR">
-</p>
-
 # Charmarr Networking Architecture
 
 This directory contains the architectural decision records (ADRs) for Charmarr's networking design, covering ingress, egress, service mesh integration, and deployment topology.

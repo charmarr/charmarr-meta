@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="../../assets/charmarr-charmarr-adr.png" width="350" alt="Charmarr ADR">
-</p>
-
 # Charmarr Applications Architecture
 
 This directory contains the architectural decision records (ADRs) for Charmarr's application implementations, covering media managers, download clients, media servers, and supporting infrastructure.

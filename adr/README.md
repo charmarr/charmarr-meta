@@ -1,7 +1,3 @@
-<p align="center">
-  <img src="../assets/charmarr-charmarr-adr.png" width="350" alt="Charmarr ADR">
-</p>
-
 # Charmarr Architecture Decision Records
 
 This directory contains all architectural decision records (ADRs) for the Charmarr project, documenting key design choices, their context, alternatives considered, and consequences.

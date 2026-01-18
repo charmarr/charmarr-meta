@@ -200,36 +200,55 @@ resources:
 
 ### Terraform Module Versioning
 
-**Per-charm modules:** Git tags with charm prefix and major version
-```
-charmarr-storage-k8s/v1.0.0   # Track 1
-charmarr-storage-k8s/v1.1.0   # Track 1 patch
-charmarr-storage-k8s/v2.0.0   # Track 2
-```
+Terraform modules use **branch-based references** aligned with charm channels. No semver tags are needed because:
 
-**Product module:** Separate version sequence per track
-```
-charmarr/v1.0.0   # Uses Track 1 charms
-charmarr/v2.0.0   # Uses Track 2 charms
-```
+- `track/N` branches enforce a strict "patches only" policy with manual approval
+- The branch name itself communicates the stability contract
+- Terraform's lock file (`.terraform.lock.hcl`) provides reproducibility by recording the resolved commit SHA
+- Automatic propagation of bug fixes and security patches is desirable for patches-only branches
 
-**Source reference:**
+**Per-charm modules:**
 ```hcl
+# Edge (active development)
 module "storage" {
-  source = "github.com/charmarr/charmarr//charms/charmarr-storage-k8s/terraform?ref=charmarr-storage-k8s/v1.0.0"
+  source = "git::https://github.com/charmarr/charmarr//charms/charmarr-storage-k8s/terraform?ref=main"
+}
+
+# Stable (Track 1)
+module "storage" {
+  source = "git::https://github.com/charmarr/charmarr//charms/charmarr-storage-k8s/terraform?ref=track/1"
+}
+```
+
+**Product modules:**
+```hcl
+# charmarr-lite: Single radarr/sonarr, flexible configuration
+module "charmarr_lite" {
+  source = "git::https://github.com/charmarr/charmarr//terraform/charmarr-lite?ref=main"
+}
+
+# charmarr: Full stack with 3x radarr, 3x sonarr, istio service mesh
+module "charmarr" {
+  source = "git::https://github.com/charmarr/charmarr//terraform/charmarr?ref=track/1"
+}
+```
+
+**External Canonical charms** (istio-k8s, istio-ingress-k8s, istio-beacon-k8s) reference their upstream TF modules:
+```hcl
+module "istio" {
+  source = "git::https://github.com/canonical/istio-k8s-operator//terraform?ref=main"
 }
 ```
 
 ### Version Alignment
 
-| Charm Channel | TF Module Major | Git Branch |
-|---------------|-----------------|------------|
-| latest/edge   | (development)   | `main`     |
-| 1/stable      | v1.x.x          | `track/1`  |
-| 2/stable      | v2.x.x          | `track/2`  |
+| Charm Channel | TF Module Ref | Git Branch |
+|---------------|---------------|------------|
+| latest/edge   | `ref=main`    | `main`     |
+| 1/stable      | `ref=track/1` | `track/1`  |
+| 2/stable      | `ref=track/2` | `track/2`  |
 
-TF module minor/patch releases for bug fixes and new optional variables.
-TF module major releases align with charm track bumps.
+No separate TF versioning - branches provide the stability contract.
 
 ### Release Cadence
 
@@ -237,7 +256,6 @@ TF module major releases align with charm track bumps.
 |---------|---------|--------|
 | latest/edge | Every merge | `main` |
 | N/stable | Every merge (patches only) | `track/N` |
-| TF tags | With stable releases | `track/N` |
 
 ### Track Lifecycle
 
@@ -281,7 +299,8 @@ charmarr/
 │   ├── radarr-k8s/
 │   └── ...
 ├── terraform/
-│   └── charmarr/              # Product module
+│   ├── charmarr-lite/         # Lite product module (single radarr/sonarr)
+│   └── charmarr/              # Full product module (3x radarr/sonarr, service mesh)
 ├── tests/
 │   └── integration/           # Cross-charm tests
 └── renovate.json
@@ -372,10 +391,13 @@ assumes:
 * TF modules stay in sync with charms via atomic commits
 * Central `.github` repo enables consistent CI/CD across all charm repos
 * Juju 3.6 + MicroK8s targets the primary homelab audience
-* Git tags enable precise TF module version pinning
+* Branch-based TF refs align with charm channels - no separate version management
+* Terraform lock file provides reproducibility without manual tagging overhead
+* Bug fixes and security patches propagate automatically on track branches
 * Long-lived branches enable parallel maintenance of multiple tracks
 * Users on older tracks continue receiving bug fixes and security patches
 * OCI images pinned with full version tags for reproducibility
+* Two product modules (charmarr-lite, charmarr) cover different deployment needs
 
 ### Bad
 
