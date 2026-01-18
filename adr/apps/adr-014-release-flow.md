@@ -79,24 +79,24 @@ Charmarr consists of multiple Juju charms and Terraform modules that need coordi
 
 ```mermaid
 graph TB
-    subgraph Track1["Track 1 (Maintenance)"]
-        E1[1/edge]
+    subgraph Latest["main branch (Active Development)"]
+        LE[latest/edge]
+    end
+
+    subgraph Track1["track/1 branch (Maintenance)"]
         S1[1/stable]
     end
 
-    subgraph Track2["Track 2 (Current)"]
-        E2[2/edge]
-        S2[2/stable]
-    end
+    LE -->|feature freeze| S1
 
-    E1 -->|patches only| S1
-    E2 -->|monthly promotion| S2
-
-    style E1 fill:#ffecb3
-    style E2 fill:#fff9c4
+    style LE fill:#fff9c4
     style S1 fill:#c8e6c9
-    style S2 fill:#c8e6c9
 ```
+
+**Channel strategy:**
+- `main` branch → `latest/edge` (continuous deployment)
+- `track/N` branches → `N/stable` (feature-frozen, patches only)
+- No `N/edge` channel needed - users wanting edge use `latest/edge`, users wanting stability use `N/stable`
 
 **Tracks:** Increment only for breaking changes (config schema, relation interfaces, Juju requirements). Track 1 may last 2+ years before deprecation.
 
@@ -109,17 +109,17 @@ gitGraph
     commit id: "Initial"
     commit id: "Feature A"
     commit id: "Feature B"
-    branch track-1
-    checkout track-1
+    branch track/1
+    checkout track/1
     commit id: "Track 1 freeze"
     checkout main
     commit id: "Breaking change" type: HIGHLIGHT
     commit id: "Track 2 feature"
-    checkout track-1
+    checkout track/1
     commit id: "Bugfix 1.1" type: REVERSE
     checkout main
     commit id: "Track 2 feature 2"
-    checkout track-1
+    checkout track/1
     commit id: "Security patch 1.2" type: REVERSE
 ```
 
@@ -127,63 +127,75 @@ gitGraph
 
 | Branch | Purpose | Publishes to |
 |--------|---------|--------------|
-| `main` | Current track development | `<track>/edge` |
-| `track-1` | Track 1 maintenance | `1/edge`, `1/stable` |
-| `track-2` | (future) Track 2 maintenance | `2/edge`, `2/stable` |
+| `main` | Active development | `latest/edge` |
+| `track/1` | Track 1 maintenance | `1/stable` |
+| `track/2` | (future) Track 2 maintenance | `2/stable` |
 
 **Track transition process:**
 
 1. Feature freeze on `main` for current track
-2. Create `track-N` branch from `main`
+2. Create `track/N` branch from `main`
 3. Bump track number in `main`
 4. Resume feature development on `main` for new track
-5. Maintenance PRs target `track-N` branch
+5. Maintenance PRs target `track/N` branch
 
 ### Multi-Track Release Flow
 
 ```mermaid
 flowchart TD
-    subgraph MainBranch["main (Track 2 - Current)"]
+    subgraph MainBranch["main (Active Development)"]
         PR2[PR Merged]
         CI2[CI: Lint & Tests]
-        Edge2[Upload to 2/edge]
-        Stable2[Promote to 2/stable]
+        Edge2[Upload to latest/edge]
     end
 
-    subgraph Track1Branch["track-1 (Maintenance)"]
+    subgraph Track1Branch["track/1 (Maintenance)"]
         PR1[Bugfix PR Merged]
         CI1[CI: Lint & Tests]
-        Edge1[Upload to 1/edge]
-        Stable1[Promote to 1/stable]
+        Stable1[Upload to 1/stable]
     end
 
     PR2 --> CI2 --> Edge2
-    Edge2 -->|monthly| Stable2
 
-    PR1 --> CI1 --> Edge1
-    Edge1 -->|as needed| Stable1
+    PR1 --> CI1 --> Stable1
 
     style PR2 fill:#e3f2fd
     style PR1 fill:#fff3e0
     style Edge2 fill:#fff9c4
-    style Edge1 fill:#ffecb3
-    style Stable2 fill:#c8e6c9
     style Stable1 fill:#c8e6c9
 ```
 
 ### OCI Image Strategy
 
-LinuxServer.io images pinned in `charmcraft.yaml`:
+All OCI images pinned to specific versions in `charmcraft.yaml`:
 
 ```yaml
 resources:
   radarr-image:
     type: oci-image
-    upstream-source: lscr.io/linuxserver/radarr:5.3.6.8612
+    # LinuxServer format: APP_VERSION-lsREVISION
+    upstream-source: lscr.io/linuxserver/radarr:6.0.4.10291-ls290
+  recyclarr-image:
+    type: oci-image
+    # Standard semver
+    upstream-source: ghcr.io/recyclarr/recyclarr:7.5.2
 ```
 
-- Renovate creates PRs when upstream releases new versions
-- PRs target both `main` and active `track-N` branches
+**Renovate update strategy:**
+- `main` branch: All updates (major/minor/patch) with automerge for patch
+- `track/*` branches: Minor/patch only (no breaking changes)
+- Different regex versioning patterns for each image format (see `renovate.json`)
+
+**Image format examples:**
+| Image | Version format | Example |
+|-------|---------------|---------|
+| radarr/sonarr/prowlarr | `MAJOR.MINOR.PATCH.BUILD-lsREV` | `6.0.4.10291-ls290` |
+| plex | `MAJOR.MINOR.PATCH.BUILD-HASH-lsREV` | `1.42.2.10156-f737b826c-ls288` |
+| qbittorrent | `MAJOR.MINOR.PATCH-rREV-lsREV` | `5.1.4-r1-ls436` |
+| sabnzbd/overseerr | `MAJOR.MINOR.PATCH-lsREV` | `4.5.5-ls240` |
+| gluetun/flaresolverr | `vMAJOR.MINOR.PATCH` | `v3.41.0` |
+| recyclarr | `MAJOR.MINOR.PATCH` | `7.5.2` |
+
 - Users can override at deploy: `juju deploy --resource radarr-image=...`
 
 ### Terraform Module Versioning
@@ -210,21 +222,22 @@ module "storage" {
 
 ### Version Alignment
 
-| Charm Track | TF Module Major | Git Branch |
-|-------------|-----------------|------------|
-| Track 1     | v1.x.x          | `track-1`  |
-| Track 2     | v2.x.x          | `main`     |
+| Charm Channel | TF Module Major | Git Branch |
+|---------------|-----------------|------------|
+| latest/edge   | (development)   | `main`     |
+| 1/stable      | v1.x.x          | `track/1`  |
+| 2/stable      | v2.x.x          | `track/2`  |
 
 TF module minor/patch releases for bug fixes and new optional variables.
 TF module major releases align with charm track bumps.
 
 ### Release Cadence
 
-| Stage | Current Track | Maintenance Track |
-|-------|---------------|-------------------|
-| edge | Every merge to `main` | Every merge to `track-N` |
-| stable | Monthly | As needed (patches) |
-| TF tags | With stable | With stable |
+| Channel | Trigger | Branch |
+|---------|---------|--------|
+| latest/edge | Every merge | `main` |
+| N/stable | Every merge (patches only) | `track/N` |
+| TF tags | With stable releases | `track/N` |
 
 ### Track Lifecycle
 
@@ -291,8 +304,7 @@ gluetun-k8s/
 .github/
 ├── workflow-templates/
 │   ├── charm-ci.yaml
-│   ├── charm-publish-edge.yaml
-│   ├── charm-release-stable.yaml
+│   ├── charm-publish.yaml      # Publishes to specified channel
 │   └── integration-test.yaml
 └── actions/
     ├── build-charm/
@@ -309,12 +321,32 @@ Charm repos reference central workflows:
 name: CI
 on:
   pull_request:
-    branches: [main, 'track-*']
+    branches: [main, 'track/*']
 jobs:
   lint-and-test:
-    uses: charmarr/.github/.github/workflows/charm-ci.yaml@main
+    uses: charmarr/.github/.github/workflows/charm-ci.yaml@v1
     with:
       charm-path: charms/radarr-k8s
+```
+
+```yaml
+# .github/workflows/publish.yaml (per-charm)
+name: "Radarr K8s: Publish"
+on:
+  workflow_call:
+    inputs:
+      dry-run:
+        type: boolean
+        default: false
+jobs:
+  publish:
+    uses: charmarr/.github/.github/workflows/charm-publish.yaml@v1
+    with:
+      charm-path: charms/radarr-k8s
+      channel: latest/edge  # or "1/stable" on track/1 branch
+      dry-run: ${{ inputs.dry-run || false }}
+    secrets:
+      CHARMHUB_TOKEN: ${{ secrets.CHARMHUB_TOKEN }}
 ```
 
 ### Platform Requirements
@@ -335,14 +367,15 @@ assumes:
 
 ### Good
 
-* Simplified edge/stable flow reduces release management overhead
+* Simplified channel model: `latest/edge` for development, `N/stable` for production
+* No redundant `N/edge` channel - users wanting edge use `latest/edge`
 * TF modules stay in sync with charms via atomic commits
 * Central `.github` repo enables consistent CI/CD across all charm repos
 * Juju 3.6 + MicroK8s targets the primary homelab audience
-* Monthly stable releases provide predictable cadence
 * Git tags enable precise TF module version pinning
 * Long-lived branches enable parallel maintenance of multiple tracks
 * Users on older tracks continue receiving bug fixes and security patches
+* OCI images pinned with full version tags for reproducibility
 
 ### Bad
 
@@ -356,7 +389,8 @@ assumes:
 
 * Track bumps are rare (potentially yearly) - low overhead but requires planning
 * Renovate handles OCI image updates - automated but creates PR noise
-* Branch protection rules needed for `track-*` branches
+* Branch protection rules needed for `track/*` branches
+* Different Renovate update policies for `main` vs `track/*` branches
 
 ## Related ADRs
 
